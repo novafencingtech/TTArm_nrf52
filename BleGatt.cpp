@@ -40,7 +40,7 @@ bool BleGatt::begin(uint64_t deviceId, uint64_t bootId, uint16_t revision, const
   for (auto chr : streams) {
     if (!add(*chr, CHR_PROPS_NOTIFY, 66, protectedAccess, SECMODE_NO_ACCESS)) return false;
   }
-  // Control and the other measurement streams remain deferred.
+  // Control and Capture remain deferred.
   return add(control, CHR_PROPS_WRITE, 9, SECMODE_NO_ACCESS, SECMODE_NO_ACCESS) &&
          add(result, CHR_PROPS_INDICATE, 10, protectedAccess, SECMODE_NO_ACCESS);
 }
@@ -74,10 +74,22 @@ BleGatt::SendResult notify(uint16_t connection, BLECharacteristic& chr, const ui
   return SendResult::Restart;
 }
 }
+namespace {
+BLECharacteristic& characteristic(BleGatt::Stream stream) {
+  if (stream == BleGatt::Stream::Weapon) return weapon;
+  if (stream == BleGatt::Stream::Probe) return probe;
+  return lights;
+}
+}
+uint16_t BleGatt::cccdHandle(Stream stream) { return characteristic(stream).handles().cccd_handle; }
+bool BleGatt::subscribed(uint16_t connection, Stream stream) { return ::subscribed(connection, cccdHandle(stream)); }
+BleGatt::SendResult BleGatt::tryNotify(uint16_t connection, Stream stream, const uint8_t* packet, uint16_t length) {
+  return notify(connection, characteristic(stream), packet, length);
+}
 uint16_t BleGatt::statusCccdHandle() { return status.handles().cccd_handle; }
 uint16_t BleGatt::cableCccdHandle() { return cable.handles().cccd_handle; }
-bool BleGatt::statusSubscribed(uint16_t connection) { return subscribed(connection, statusCccdHandle()); }
-bool BleGatt::cableSubscribed(uint16_t connection) { return subscribed(connection, cableCccdHandle()); }
+bool BleGatt::statusSubscribed(uint16_t connection) { return ::subscribed(connection, statusCccdHandle()); }
+bool BleGatt::cableSubscribed(uint16_t connection) { return ::subscribed(connection, cableCccdHandle()); }
 BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t connection, const uint8_t* packet, uint16_t length) {
   return notify(connection, status, packet, length);
 }
@@ -85,6 +97,9 @@ BleGatt::SendResult BleGatt::tryNotifyCable(uint16_t connection, const uint8_t* 
   return notify(connection, cable, packet, length);
 }
 #else
+uint16_t BleGatt::cccdHandle(Stream) { return 0; }
+bool BleGatt::subscribed(uint16_t, Stream) { return false; }
+BleGatt::SendResult BleGatt::tryNotify(uint16_t, Stream, const uint8_t*, uint16_t) { return SendResult::Stopped; }
 uint16_t BleGatt::cableCccdHandle() { return 0; }
 bool BleGatt::cableSubscribed(uint16_t) { return false; }
 BleGatt::SendResult BleGatt::tryNotifyCable(uint16_t, const uint8_t*, uint16_t) { return SendResult::Stopped; }

@@ -55,7 +55,8 @@ Implementation details and immediate phone-test instructions: [BLE_PHASE2.md](BL
 ## Phase 3: measurement streams
 
 The Cable-only implementation is described in [Cable messaging](BLE_CABLE.md).
-Weapon, Probe and Lights are not implemented in this step.
+Weapon, Probe and Lights are now implemented as described in
+[measurement messaging](BLE_MEASUREMENTS.md); hardware qualification is pending.
 
 Add combined Cable, then complete Weapon and Probe streams at 30 Hz; add Lights
 changes and 1 Hz state refresh. Enable each capability only when all its fields

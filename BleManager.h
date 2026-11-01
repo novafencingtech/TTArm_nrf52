@@ -27,6 +27,9 @@ Status getStatus(uint32_t now);
 void cacheDiagnostics(uint32_t count, uint32_t roundedRateHz);
 void cacheBattery(float volts);
 void setMode(uint8_t protocolMode);
+void cacheWeapon(uint8_t flags, float epee, float foil, uint32_t eEdge, uint32_t fEdge, float open);
+void cacheProbe(const float resistance[6], float open);
+void cacheLights(uint8_t flags, uint32_t eEdge, uint32_t fEdge, uint32_t now);
 void cacheCable(uint16_t faults, const float resistance[6], const int adc[9], float open);
 }
 #endif

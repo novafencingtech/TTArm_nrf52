@@ -50,6 +50,8 @@ void setWeaponResistanceMode(bool enableCapture) {
   InitializeADC(enableCapture);
   loadCalibrationData();
   ActiveCh = &(FoilADC);
+  // Require fresh channel completions before caching this mode's BLE state.
+  FoilADC.valueReady = EpeeADC.valueReady = WeaponAC.valueReady = false;
 
   if (enableCapture) {
     //FoilADC.hsBuffer.SetBuffers(int *mainBuffer, int bufferSize, int *preTrigger1, int *preTrigger2, int preTriggerLen);
@@ -123,6 +125,7 @@ void setProbeMode() {
   loadCalibrationData();
 
   ActiveCh = &(ProbeArray[0]);
+  for (int k = 0; k < 6; ++k) ProbeArray[k].valueReady = false;
 
   weaponState.cableDC = true;
   
@@ -451,6 +454,9 @@ void updateProbe()
       *dataAddr[k] = OPEN_CIRCUIT_VALUE;
     }
   }
+  const float bleProbe[6] = {probeData.ohm_Epee, probeData.ohm_Foil, probeData.ohm_WpnAC,
+    probeData.ohm_APr, probeData.ohm_BPr, probeData.ohm_CPr};
+  BleManager::cacheProbe(bleProbe, OPEN_CIRCUIT_VALUE);
 }
 
 void updateWeaponState() {
@@ -501,6 +507,14 @@ void updateWeaponState() {
 }
 
 
+uint8_t bleWeaponFlags() {
+  return (weaponState.epeeOn ? 1 : 0) | (weaponState.foilOn ? 2 : 0) |
+    (weaponState.epeeInterOn ? 4 : 0) | (weaponState.foilInterOn ? 8 : 0);
+}
+void cacheBleLights() {
+  BleManager::cacheLights(bleWeaponFlags(), weaponState.tEpeeInterOn,
+    weaponState.tFoilInterOn, millis());
+}
 void updateWeaponStateDigital() {
   //Update this code to use the A, B, C line displays
   // A = red/Epee
@@ -514,6 +528,7 @@ void updateWeaponStateDigital() {
   bool foilState = !nrf_gpio_pin_read(LineCDetect); //Inputs are HIGH, pulled LOW by line B
 
   numSamples++;
+  cacheBleLights(); // Initial state on mode entry, before accepting changes.
 
   if (foilState != weaponState.foilOn) {
     if ((t_now - weaponState.tFoilTrigger) > weaponFoilDebounce) {
@@ -521,6 +536,7 @@ void updateWeaponStateDigital() {
       weaponState.tFoilInterOn = t_now;
       weaponState.foilInterOn = true;
       tLastActive=t_now;
+      cacheBleLights();
     }
   }
 
@@ -530,15 +546,18 @@ void updateWeaponStateDigital() {
       weaponState.tEpeeInterOn = t_now;
       weaponState.epeeInterOn = true;
       tLastActive=t_now;
+      cacheBleLights();
     }
   }
 
   if ( (weaponState.epeeInterOn) &&  ((t_now - weaponState.tEpeeInterOn) > weaponState.tLightChange) ) {
     weaponState.epeeInterOn = false;
+    cacheBleLights();
     //Serial.println("Epee trigger");
   }
   if ( (weaponState.foilInterOn) &&  ((t_now - weaponState.tFoilInterOn) > weaponState.tLightChange) ) {
     weaponState.foilInterOn = false;
+    cacheBleLights();
   }
 
 

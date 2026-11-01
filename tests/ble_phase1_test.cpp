@@ -52,7 +52,7 @@ static void identityAndGatt() {
   for (int i = 0; i < 8; ++i) {
     assert(bytes[4 + i] == 8 - i); assert(bytes[12 + i] == 0x18 - i);
   }
-  assert(bytes[20] == 1 && bytes[21] == 2 && bytes[22] == 0 && bytes[23] == 0);
+  assert(bytes[20] == 15 && bytes[21] == 2 && bytes[22] == 0 && bytes[23] == 0);
   assert(bytes[24] == 1 && bytes[26] == 2 && bytes[31] == 0);
   assert(std::strcmp(reinterpret_cast<char*>(bytes + 32), "ble1") == 0);
   for (int i = 36; i < 56; ++i) assert(bytes[i] == 0);

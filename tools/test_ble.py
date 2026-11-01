@@ -23,6 +23,11 @@ def main():
     subprocess.run([args.compiler, "-std=c++17", "-Itests/fakes", "-I.",
                     "tests/ble_status_test.cpp", "BleStatusPublisher.cpp", "BleGatt.cpp", "BleIdentity.cpp",
                     "-o", str(output)], cwd=ROOT, check=True)
+    subprocess.run([str(output)], cwd=ROOT, check=True)
+    output = output.with_name("ble_measurement_test.exe")
+    subprocess.run([args.compiler, "-std=c++17", "-Itests/fakes", "-I.",
+                    "tests/ble_measurement_test.cpp", "BleMeasurementPublisher.cpp", "BleGatt.cpp", "BleIdentity.cpp",
+                    "-o", str(output)], cwd=ROOT, check=True)
     return subprocess.call([str(output)], cwd=ROOT)
 
 

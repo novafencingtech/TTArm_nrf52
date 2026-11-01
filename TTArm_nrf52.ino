@@ -810,6 +810,11 @@ void loop() {
       //EpeeADC.updateVals();
       updateWeaponResistance();
       updateWeaponState();
+      if (FoilADC.valueReady && EpeeADC.valueReady && WeaponAC.valueReady) {
+        BleManager::cacheWeapon(bleWeaponFlags() | (weaponState.lineAC ? 16 : 0),
+          weaponState.ohm_Epee, weaponState.ohm_Foil, weaponState.tEpeeInterOn,
+          weaponState.tFoilInterOn, OPEN_CIRCUIT_VALUE);
+      }
       if ((weaponState.cableDC) && ((t_now - t_idle_Check) > tIdleWakeUpInterval)) {
         if (checkCableConnected()) {
           setBoxMode(CABLE);

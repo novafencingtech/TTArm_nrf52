@@ -3,6 +3,7 @@
 #include "BleGatt.h"
 #include "BleStatusPublisher.h"
 #include "BleCablePublisher.h"
+#include "BleMeasurementPublisher.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,9 @@ namespace {
 BlePairingState session;
 BleStatusPublisher statusPublisher;
 BleCablePublisher cablePublisher;
+BleMeasurementPublisher weaponPublisher(0x12), probePublisher(0x13), lightsPublisher(0x14);
+BleMeasurementPublisher* measurements[] = {&weaponPublisher, &probePublisher, &lightsPublisher};
+const BleGatt::Stream streams[] = {BleGatt::Stream::Weapon, BleGatt::Stream::Probe, BleGatt::Stream::Lights};
 SemaphoreHandle_t stateMutex;
 bool initialized = false;
 bool stopping = false;
@@ -106,6 +110,28 @@ void publishCable(uint32_t now) {
     session.fail("Cable MTU error"); disconnectRequested = true;
   }
 }
+void refreshMeasurements() {
+  for (uint8_t i = 0; i < 3; ++i)
+    measurements[i]->setEnabled(session.handle != BlePairingState::NoConnection && session.encrypted &&
+      !stopping && !forgetting && !disconnectRequested && BleGatt::subscribed(session.handle, streams[i]));
+}
+void publishMeasurements(uint32_t now) {
+  refreshMeasurements();
+  // Share a bounded credit budget across the active measurement stream.
+  for (uint8_t i = 0; i < 3; ++i) {
+    auto& publisher = *measurements[i];
+    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+      uint8_t packet[66]; uint16_t length = 0;
+      if (!publisher.next(now, micros(), negotiatedMtu, packet, length)) break;
+      const auto sent = BleGatt::tryNotify(session.handle, streams[i], packet, length);
+      if (sent == BleGatt::SendResult::Sent) publisher.accepted();
+      else if (sent == BleGatt::SendResult::Retry) break;
+      else if (sent == BleGatt::SendResult::Stopped) { publisher.setEnabled(false); break; }
+      else { session.fail("Measurement link error"); disconnectRequested = true; break; }
+    }
+    if (publisher.needsReconnect()) { session.fail("Measurement MTU error"); disconnectRequested = true; }
+  }
+}
 void publishStatus(uint32_t now) {
   refreshStatusSubscription();
   BLEConnection* connection = Bluefruit.Connection(session.handle);
@@ -133,6 +159,7 @@ void onEvent(ble_evt_t* event) {
     session.connect(handle, millis());
     statusPublisher.connect();
     cablePublisher.connect();
+    for (auto publisher : measurements) publisher->connect();
     negotiatedMtu = 23;
     mtuRequested = false;
     intervalRequestPending = true;
@@ -153,6 +180,7 @@ void onEvent(ble_evt_t* event) {
     case BLE_GAP_EVT_DISCONNECTED:
       statusPublisher.disconnect();
       cablePublisher.disconnect();
+      for (auto publisher : measurements) publisher->disconnect();
       session.disconnect(handle);
       negotiatedMtu = 23;
       mtuRequested = false;
@@ -191,6 +219,7 @@ void onEvent(ble_evt_t* event) {
       break;
     case BLE_GATTS_EVT_WRITE:
       // Observe every accepted CCCD toggle, including off/on between polls.
+      refreshMeasurements();
       if (event->evt.gatts_evt.params.write.handle == BleGatt::statusCccdHandle()) refreshStatusSubscription();
       if (event->evt.gatts_evt.params.write.handle == BleGatt::cableCccdHandle()) refreshCableSubscription();
       break;
@@ -307,6 +336,7 @@ void BleManager::poll(uint32_t now) {
   updateConnectionInterval(now);
   publishStatus(now);
   publishCable(now);
+  publishMeasurements(now);
   disconnectPending();
 }
 bool BleManager::startPairing(uint32_t now) {
@@ -337,6 +367,7 @@ void BleManager::stop() {
   publishStatus(millis()); // Bounded best-effort pre-shutdown Status; never wait.
   statusPublisher.disconnect();
   cablePublisher.disconnect();
+  for (auto publisher : measurements) publisher->disconnect();
   session.cancel();
   stopping = true;
   session.message = "BLE stopped";
@@ -383,7 +414,25 @@ void BleManager::setMode(uint8_t protocolMode) {
     updateConnectionInterval(millis());
   }
   statusPublisher.setMode(protocolMode);
-  if (protocolMode <= 6) cablePublisher.setMode(protocolMode, statusPublisher.epoch());
+  if (protocolMode <= 6) {
+    cablePublisher.setMode(protocolMode, statusPublisher.epoch());
+    for (auto publisher : measurements) publisher->setMode(protocolMode, statusPublisher.epoch());
+  }
+}
+void BleManager::cacheWeapon(uint8_t flags, float e, float f, uint32_t ee, uint32_t fe, float open) {
+  if (!stateMutex) return;
+  Lock lock;
+  weaponPublisher.cacheWeapon(flags, e, f, ee, fe, open);
+}
+void BleManager::cacheProbe(const float values[6], float open) {
+  if (!stateMutex) return;
+  Lock lock;
+  probePublisher.cacheProbe(values, open);
+}
+void BleManager::cacheLights(uint8_t flags, uint32_t ee, uint32_t fe, uint32_t now) {
+  if (!stateMutex) return;
+  Lock lock;
+  lightsPublisher.cacheLights(flags, ee, fe, now);
 }
 void BleManager::cacheCable(uint16_t faults, const float resistance[6], const int adc[9], float open) {
   if (!stateMutex) return;
@@ -391,6 +440,9 @@ void BleManager::cacheCable(uint16_t faults, const float resistance[6], const in
   cablePublisher.cache(faults, resistance, adc, open);
 }
 #else
+void BleManager::cacheWeapon(uint8_t, float, float, uint32_t, uint32_t, float) {}
+void BleManager::cacheProbe(const float[6], float) {}
+void BleManager::cacheLights(uint8_t, uint32_t, uint32_t, uint32_t) {}
 void BleManager::cacheCable(uint16_t, const float[6], const int[9], float) {}
 bool BleManager::begin(uint16_t) { return false; }
 void BleManager::poll(uint32_t) {}

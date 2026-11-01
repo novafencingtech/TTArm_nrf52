@@ -121,6 +121,7 @@ class oledGraphLabel: oledColorList {
     void setLabelColor(uint16_t newColor);
     void setColors(int numBars, float values[], int colors[]);
     void clearLabel();
+    void invalidate(); // Force the next printLabel() to redraw after a screen clear.
     
   private:
     Adafruit_SSD1351 *_tft;
@@ -131,6 +132,10 @@ class oledGraphLabel: oledColorList {
     uint8_t _fontSize=2;
     uint16_t _locX=0;
     uint16_t _locY=0;
+    char _lastText[16]={};
+    uint16_t _lastColor=0;
+    uint8_t _lastFontSize=0;
+    bool _hasRendered=false;
     //bool _openTxt=false;
 };
 

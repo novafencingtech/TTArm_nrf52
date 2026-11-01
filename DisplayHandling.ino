@@ -11,6 +11,12 @@ int oldScale = 200;           //max value of full graph for last refresh
 #define SLOWCOUNT 8  //how many refreshes before scale can change
 long unsigned int startTime, endTime, totalTime, timeSamples;
 
+void invalidateOLEDLabels() {
+  oledGraphLabel* labels[] = {&lineALabel, &lineBLabel, &lineCLabel, &lameLabel,
+    &prEpeeLabel, &prFoilLabel, &prACLabel, &prALabel, &prBLabel, &prCLabel};
+  for (auto* label : labels) label->invalidate();
+}
+
 
 int scaleWidth(int val) {  //tenths don't divide by 4 very well
   int sVal;                //so this expressly sets the break points
@@ -299,6 +305,7 @@ void dimOLEDDisplay() {
   //static bool alreadyDimmed=false;
   //Fill the rest of the display with black leaving only the top bar.
   tft.fillRect(0, 17, 128, 128 - 17, BLACK);
+  invalidateOLEDLabels();
 #if FAST_LED_ACTIVE
   lameLED = CRGB::Black;
   FastLED.show();
@@ -455,7 +462,10 @@ float gv(const char *s) {
 
 bool oledLayoutInvalid = false;
 
-void invalidateOLED() { oledLayoutInvalid = true; }
+void invalidateOLED() {
+  oledLayoutInvalid = true;
+  invalidateOLEDLabels();
+}
 
 void labelTitle(const char *s, int color) {
   const int LBL_MAX = 15;
@@ -586,6 +596,7 @@ void updateOLED(TestBoxModes Mode) {
     //Serial.println("Setting new mode");
     //tft.fillRect(0, 0, 128, 128, BLACK);
     tft.fillScreen(BLACK);
+    invalidateOLEDLabels();
     tft.setCursor(2, 2);
 #if FAST_LED_ACTIVE
     lameLED = CRGB::Black;
@@ -806,6 +817,7 @@ void updateOLED(TestBoxModes Mode) {
         if (newConnection == shorted) {
           labelTitle("Wep GND", RED);
           tft.fillRect(0, 27, 128, 100, BLACK);
+          invalidateOLEDLabels();
           oldA = oldB = 320;
           //oldA=weaponState.ohm10xEpee;
           //oldB=weaponState.ohm10xFoil;
@@ -1104,6 +1116,7 @@ void createWeaponDisplay() {
 
 void createProbeDisplay() {
   tft.fillRect(0, 27, 128, 100, colorList.cBLACK);
+  invalidateOLEDLabels();
   labelTitle("Probe", colorList.cMAGENTA);
   //prEpeeLabel.printLabel("Ep", OPEN_CIRCUIT_VALUE);
   //prEpeeBar.updateGraph(OPEN_CIRCUIT_VALUE);

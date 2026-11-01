@@ -1,7 +1,7 @@
 # Cable messaging
 
-Implements only the combined Cable stream from the revision 2 message
-specification. Weapon, Probe, Lights and commands remain deferred.
+Implements the combined Cable stream; its wire layout is unchanged in protocol 2.1.
+See [Status app sync](BLE_STATUS.md) for the added timing diagnostics. Weapon, Probe, Lights and commands remain deferred.
 
 Connect/encrypt, select Cable mode (Cord or Lame presentation), and enable
 notifications on `4a1e0010-3bb5-44b4-b566-8d22e72da6f5`. Status subscriptions

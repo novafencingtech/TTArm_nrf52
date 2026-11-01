@@ -1,6 +1,12 @@
 # TournaTest BLE Message Specification
 
-**Protocol: 2.0 · Specification revision: 2 · October 31, 2026**
+**Protocol: 2.1 · Specification revision: 3 · November 1, 2026**
+
+Revision 3 appends average main-loop duration and actual negotiated BLE connection
+interval to Status. Public Protocol and Full Identity now declare minor version 1.
+Status payload/logical/single-notification lengths are now 16/30/36 bytes. Other
+wire layouts, UUIDs, capability bits, and security requirements are unchanged.
+See [Status 2.1 app sync](BLE_STATUS.md) for offsets, units, and complete byte vectors.
 
 Revision 2 adopts standard encrypted Just Works pairing for both nRF52832 and nRF52840, per the compatibility-first implementation requirement. Passkey authentication and mandatory LE Secure Connections are removed. Full Identity's `required_security_level` is now 2; other field layouts and UUIDs are unchanged. Receivers must use this revised security contract.
 
@@ -16,7 +22,7 @@ Contents: [GATT](#2-gatt-database), [identity](#4-identity-values), [framing](#5
 - Cable resistance/fault and ADC data are **one combined message at 30 Hz**. Weapon and Probe are 30 Hz. Lights follows accepted hardware-handler changes, with a full-state refresh at 1 Hz. Status is 1 Hz.
 - Published measurement fields are valid. There are **no measurement-validity masks**. Firmware SHALL withhold a message until all of its fields are initialized and applicable. A receiver SHALL still validate encoding and reject malformed messages.
 - Lame is a **display setting/presentation**, not an acquisition mode or separate characteristic. Advanced Mode's cycle-order behavior is not a BLE setting in this specification.
-- The user controls are SetBoxMode, settings read/write, and manual calibration. Capture waveform transfer and retained event history are outside protocol 2.0; their capability bits remain zero.
+- The user controls are SetBoxMode, settings read/write, and manual calibration. Capture waveform transfer and retained event history are outside protocol 2.1; their capability bits remain zero.
 
 ### 1.1 Primitive types and units
 
@@ -29,7 +35,7 @@ Contents: [GATT](#2-gatt-database), [identity](#4-identity-values), [framing](#5
 | `i32` | Signed 32-bit two's-complement integer, little-endian |
 | Fixed text | UTF-8 followed by a zero terminator and zero padding to the field length |
 
-Encode/decode fields explicitly. C/C++ native structure layout and Kotlin/Swift object layout SHALL NOT determine wire bytes. Fields may be unaligned. No floats, implicit padding, JSON or debug strings are carried in custom messages. Reserved fields/bits SHALL be zero; receivers reject nonzero reserved fields in 2.0.
+Encode/decode fields explicitly. C/C++ native structure layout and Kotlin/Swift object layout SHALL NOT determine wire bytes. Fields may be unaligned. No floats, implicit padding, JSON or debug strings are carried in custom messages. Reserved fields/bits SHALL be zero; receivers reject nonzero reserved fields in 2.1.
 
 Resistance is **milliohms**: signed integer `420` represents 0.420 Ω. `0x7FFFFFFF` represents electrical **OPEN**, which is a valid result. Other finite resistance values range from `-2147483647` through `2147483646`; preserve signed calibrated values. `0x80000000` is reserved and SHALL NOT be transmitted as an unavailable-reading placeholder. A received live message containing it is malformed.
 
@@ -39,7 +45,7 @@ Cable ADC values are `u16` counts in 0–4095. The value 4095 is valid; `0xFFFF`
 
 ### 2.1 Custom service and characteristic UUIDs
 
-All boxes implementing 2.0 use the same UUIDs. UUIDs identify the protocol, not an individual physical box. Handles are discovered and SHALL NOT be hard-coded.
+All boxes implementing 2.1 use the same UUIDs. UUIDs identify the protocol, not an individual physical box. Handles are discovered and SHALL NOT be hard-coded.
 
 | Role | UUID | Properties | Characteristic maximum value length |
 | --- | --- | --- | --- |
@@ -55,7 +61,7 @@ All boxes implementing 2.0 use the same UUIDs. UUIDs identify the protocol, not 
 | Control | `4a1e0030-3bb5-44b4-b566-8d22e72da6f5` | Write with response | 9 |
 | Command Result | `4a1e0031-3bb5-44b4-b566-8d22e72da6f5` | Indicate | 10 |
 
-Characteristic values SHALL be variable length up to the listed limit. Do not pad a 30-byte Status or 32-byte Lights value to 66 bytes. Register the reserved Capture characteristic for database stability, but send no Capture notifications in 2.0. Register all listed characteristics even if an optional capability is unavailable.
+Characteristic values SHALL be variable length up to the listed limit. Do not pad a 36-byte Status or 32-byte Lights value to 66 bytes. Register the reserved Capture characteristic for database stability, but send no Capture notifications in 2.1. Register all listed characteristics even if an optional capability is unavailable.
 
 Each Notify/Indicate characteristic has its own standard CCCD, UUID `00002902-0000-1000-8000-00805f9b34fb`:
 
@@ -109,18 +115,18 @@ These are direct GATT Read values. They have **no live-message header and no fra
 | --- | --- | --- | --- |
 | 0 | bytes[4] | magic | ASCII `TTBL`, hex `54 54 42 4C` |
 | 4 | u8 | protocol_major | 2 |
-| 5 | u8 | protocol_minor | 0 |
+| 5 | u8 | protocol_minor | 1 |
 | 6 | u8 | identity_layout | 1 |
 | 7 | u8 | reserved | 0 |
 
-For 2.0, the client SHALL require exactly these bytes: `54 54 42 4C 02 00 01 00`. A different major/minor/layout is unsupported; do not guess its schema.
+For 2.1, the client SHALL require exactly these bytes: `54 54 42 4C 02 01 01 00`. A client supporting older 2.0 firmware must select its old 10-byte Status schema explicitly after reading `54 54 42 4C 02 00 01 00`. A different unsupported major/minor/layout must be rejected; do not guess its schema from message length.
 
 ### 4.2 Full Identity — exactly 68 bytes
 
 | Offset | Type/length | Field | Definition |
 | --- | --- | --- | --- |
 | 0 | u8 | protocol_major | 2 |
-| 1 | u8 | protocol_minor | 0 |
+| 1 | u8 | protocol_minor | 1 |
 | 2 | u8 | identity_layout | 1 |
 | 3 | u8 | identity_length | 68 |
 | 4 | u64 | device_id | Nonzero stable box ID |
@@ -184,7 +190,7 @@ The maximum logical message is512 bytes, including this header. No CRC follows o
 | Weapon | `0x12` | 19 | 33 | 39 | 2,3 |
 | Probe | `0x13` | 26 | 40 | 46 | 4 |
 | Lights | `0x14` | 12 | 26 | 32 | 1 |
-| Status | `0x01` | 10 | 24 | 30 | 0–6 while radio is powered |
+| Status | `0x01` | 16 | 30 | 36 | 0–6 while radio is powered |
 
 The type SHALL match its characteristic, payload length and mode. Type`0x11` is retired; do not send separate Cable ADC. Types`0x20`–`0x23`, `0x30`/`0x31` stream envelopes, and Capture types`0x40`–`0x43` are not part of this profile. A receiver rejects an unsupported/mismatched type without updating measurements or command state.
 
@@ -195,7 +201,7 @@ The type SHALL match its characteristic, payload length and mode. Type`0x11` is 
 | 0 | Cable | Cord or Lame display using the Cable data |
 | 1 | Digital weapon | Lights |
 | 2 | Weapon resistance | Weapon |
-| 3 | Local hit capture | Live Weapon cards; waveform transfer unavailable in 2.0 |
+| 3 | Local hit capture | Live Weapon cards; waveform transfer unavailable in 2.1 |
 | 4 | Probe | Probe |
 | 5 | Idle | No mode-measurement publications; Status may continue |
 | 6 | Off | Only a best-effort pre-shutdown Status; no radio communication after power-off |
@@ -358,17 +364,45 @@ Send a full state immediately when subscribed or entering Lights mode, then **on
 
 The phone may receive activation and release before drawing a frame. Preserve actual hardware latch flags to display brief activity; do not silently synthesize a persistent latch or claim every sub-frame pulse visibly flashes. Full-state refresh repairs a lost final state notification. Retained edge history/replay is outside this profile.
 
-### 7.5 Status (`0x01`) — 10 bytes
+### 7.5 Status (`0x01`) — 16 bytes
 
 | Offset | Type | Field |
 | --- | --- | --- |
 | 0 | u32 | diagnostic_count |
 | 4 | u32 | diagnostic_rate_Hz |
 | 8 | u16 | battery_mV |
+| 10 | u32 | average_loop_us |
+| 14 | u16 | connection_interval_units |
 
 This matches the existing serial diagnostics `t=<uptime>, N=<count>, <rate>Hz, Bat=<voltage>V`, with uptime already in the logical header and voltage converted to millivolts. `diagnostic_count` is the existing interval N, not an added per-channel/lifetime acquisition counter. `diagnostic_rate_Hz` is the existing rate rounded to a whole Hz, not BLE delivery rate or waveform timing.
 
-Reuse a coherent cached copy of the existing diagnostic calculation. BLE publication SHALL NOT reset N, change the serial diagnostic calculation schedule, or recalculate rate with a new interval. The reference updates diagnostics about every 5 s and battery about every 10 s; 1 Hz Status repeats the last valid calculated values between updates. Header uptime timestamps the new Status message, not new battery acquisition. Do not add new acquisition/delivery counters, validity flags, extended state flags or settings to this payload.
+Reuse a coherent cached copy of the existing diagnostic calculation. BLE publication SHALL NOT reset N, change the serial diagnostic calculation schedule, or recalculate rate with a new interval. The reference updates diagnostics about every 5 s and battery about every 10 s; 1 Hz Status repeats the last valid calculated values between updates. Header uptime timestamps the new Status message, not new battery acquisition.
+
+`average_loop_us` is the integer mean elapsed time between main-loop starts over
+the most recent completed window of at least 1,000,000 microseconds. Divide the
+elapsed window time by the number of completed loop intervals, truncating to
+whole microseconds. The window closes at a loop start and includes blocking work,
+interrupt/preemption time, display/serial work, delays, and early-return paths.
+Setup time is excluded. Cache the result between windows. Zero means no completed
+window yet; display waiting/unknown. This is neither ADC rate nor notification
+rate, and does not measure worst-case poll gaps. Timing continues across modes
+and reconnects; a window may span a mode change.
+
+`connection_interval_units` is the active connection's negotiated interval in
+units of 1.25 ms, read from the stock Bluefruit connection before frame formation.
+Valid connected values are 6..3200 (7.5..4000 ms); zero means unavailable. Display
+milliseconds as `units * 1.25`, preserving fractional milliseconds. This is not
+the requested interval range, advertising interval, ATT MTU, or delivery rate.
+Connection parameter changes appear in the next newly formed Status. Retries
+and fragments preserve the original immutable timing values.
+
+The reference firmware requests exactly 15 ms (minimum = maximum = 12 units) in active modes (0..4) and 180..200 ms
+in Idle (5), with zero peripheral latency and a 4 s supervision timeout. It
+requests the new range on mode changes and after encryption on reconnect.
+While active, if the actual interval exceeds 30 ms, it retries every 5 s until
+the negotiated interval is at most 30 ms. Requests resume if the interval later
+increases above that threshold. Local busy/failure results are retried at the
+same spacing, without blocking. The central retains the final decision.
 
 Publish only once all three diagnostics are initialized, on subscription/mode change and at 1 Hz thereafter. Before first initialized Status the phone shows diagnostics waiting, not fabricated values. Status does not refresh an old measurement or assert that a quiet Lights state has been refreshed.
 
@@ -399,7 +433,7 @@ An ATT Write Response acknowledges that the write was accepted. **Only Command R
 | `0x03` | SET_SETTING | `setting_id:u16 @3, value:i32 @5` | 9 |
 | `0x04` | MANUAL_CALIBRATE | None | 3 |
 
-Other opcodes are unassigned. HELLO, stream-start, event ACK/replay, calibration cancellation and capture-transfer commands are not defined by 2.0.
+Other opcodes are unassigned. HELLO, stream-start, event ACK/replay, calibration cancellation and capture-transfer commands are not defined by 2.1.
 
 ### 8.3 Command Result header — 4 bytes
 
@@ -449,7 +483,7 @@ Capability bit 10 is required. This is an explicit user action invoking the veri
 
 Once accepted, send IN_PROGRESS for that request and, after actual completion, one final SUCCESS or error for the **same opcode/ID**. Repeated IN_PROGRESS updates are allowed as activity updates; they have no percentage/detail bytes. Immediate rejection may return an error without an IN_PROGRESS. A synchronous completed calibration may return SUCCESS directly. Do not block a BLE callback/interrupt waiting for calibration to finish. Publish measurements only when they are valid; do not relabel pre-calibration samples as newly acquired data during the operation. Normal measurement publication resumes from current data afterwards.
 
-The app keeps the request pending after IN_PROGRESS. No fixed calibration duration is claimed by this protocol. On ordinary command timeout, missing final result or disconnect, the outcome is **unknown**, not success/failure inferred from ATT. The phone SHALL NOT automatically repeat calibration or a settings write. After reconnect, read settings/observe actual mode again and use the local box display/procedure to establish calibration state. There is no calibration query/cancel command or persistent completion replay in 2.0.
+The app keeps the request pending after IN_PROGRESS. No fixed calibration duration is claimed by this protocol. On ordinary command timeout, missing final result or disconnect, the outcome is **unknown**, not success/failure inferred from ATT. The phone SHALL NOT automatically repeat calibration or a settings write. After reconnect, read settings/observe actual mode again and use the local box display/procedure to establish calibration state. There is no calibration query/cancel command or persistent completion replay in 2.1.
 
 ## 9. Settings registry
 
@@ -490,9 +524,13 @@ Reserve transmit opportunity for short Command Results. Coalesce old periodic sn
 
 ## 11. Shared byte examples
 
-The companion [protocol_v2_examples.json](ble/protocol_v2_examples.json) is language-neutral synthetic test data for firmware and phone codec tests. It includes complete Identity bytes, decoded expected values, field schemas extracted from these tables, logical stream bytes, fragments at small/large value limits, rejected/incomplete fragment cases and compact commands. Expected `u64` values are decimal strings so JSON consumers do not lose precision; other scalar values are JSON numbers. These are generated examples, not hardware captures. Run [check_protocol_examples.py](ble/check_protocol_examples.py) to check lengths, offsets, example bytes, inferred fragmentation and this document's tables.
+The [Status 2.1 app sync document](BLE_STATUS.md) provides the current Status
+logical bytes and wrapped notifications at MTU 23 and 247, with decoded expected
+values. Cable and command layout examples follow below. These are synthetic codec
+examples, not hardware captures. The formerly referenced `ble/` JSON fixtures
+and checker are not included in this repository.
 
-Public Protocol: `54 54 42 4C 02 00 01 00`.
+Public Protocol: `54 54 42 4C 02 01 01 00`.
 
 ### 11.1 Combined Cable
 

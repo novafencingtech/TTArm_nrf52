@@ -6,9 +6,10 @@
 // The manager serializes all calls with its existing mutex.
 class BleStatusPublisher {
 public:
-  static const uint16_t LogicalLength = 24;
-  static const uint16_t MaximumPacketLength = 30;
+  static const uint16_t LogicalLength = 30;
+  static const uint16_t MaximumPacketLength = 36;
   void cacheDiagnostics(uint32_t count, uint32_t rateHz);
+  void cacheTiming(uint32_t averageLoopUs, uint16_t connectionIntervalUnits);
   bool cacheBattery(float volts);
   bool ready() const { return diagnosticsReady && batteryReady; }
   void setMode(uint8_t mode);
@@ -22,6 +23,8 @@ public:
 
 private:
   uint32_t diagnosticCount = 0, diagnosticRate = 0;
+  uint32_t averageLoopUs = 0;
+  uint16_t connectionIntervalUnits = 0;
   uint16_t batteryMv = 0;
   bool diagnosticsReady = false, batteryReady = false;
   uint8_t currentMode = 5; // The sketch boots in Idle.

@@ -28,6 +28,11 @@ uint16_t advertisedInterval = 0;
 uint32_t lastBondCheck = 0;
 uint16_t negotiatedMtu = 23;
 bool mtuRequested = false;
+uint8_t currentMode = 5; // Idle at boot; modes 0..4 actively sample, 6 is Off.
+bool intervalRequestPending = true, intervalRequestAttempted = false;
+uint32_t lastIntervalRequest = 0;
+bool loopTimingStarted = false;
+uint32_t loopWindowStartUs = 0, loopWindowCount = 0, averageLoopUs = 0;
 char deviceName[13] = {};
 char deviceIdText[17] = {};
 
@@ -57,6 +62,25 @@ void requestMtu(uint16_t handle) {
   BLEConnection* connection = Bluefruit.Connection(handle);
   if (connection) mtuRequested = connection->requestMtuExchange(TTARM_BLE_TARGET_MTU);
 }
+void setPreferredInterval() {
+  // GAP interval units are 1.25 ms. Keep zero latency and the 4 s timeout.
+  if (currentMode == 5) Bluefruit.Periph.setConnInterval(144, 160); // 180..200 ms
+  else Bluefruit.Periph.setConnInterval(12, 12); // Request exactly 15 ms.
+}
+void updateConnectionInterval(uint32_t now) {
+  if (!session.encrypted || session.handle == BlePairingState::NoConnection ||
+      stopping || forgetting || disconnectRequested || currentMode == 6) return;
+  BLEConnection* connection = Bluefruit.Connection(session.handle);
+  if (!connection) return;
+  const bool tooSlow = currentMode < 5 && connection->getConnectionInterval() > 24;
+  if (!intervalRequestPending && !tooSlow) return;
+  if (intervalRequestAttempted && uint32_t(now - lastIntervalRequest) < 5000) return;
+  lastIntervalRequest = now;
+  intervalRequestAttempted = true;
+  // Stock SoftDevice API: NULL requests Bluefruit's current preferred range.
+  // Returns immediately, including when another link procedure is busy.
+  intervalRequestPending = sd_ble_gap_conn_param_update(session.handle, nullptr) != NRF_SUCCESS;
+}
 void refreshStatusSubscription() {
   statusPublisher.setEnabled(session.handle != BlePairingState::NoConnection && session.encrypted &&
       !stopping && !forgetting && !disconnectRequested && BleGatt::statusSubscribed(session.handle));
@@ -84,8 +108,10 @@ void publishCable(uint32_t now) {
 }
 void publishStatus(uint32_t now) {
   refreshStatusSubscription();
-  // At MTU 23 a Status has two fragments. Bound work per poll, including retries.
-  for (uint8_t attempt = 0; attempt < 2; ++attempt) {
+  BLEConnection* connection = Bluefruit.Connection(session.handle);
+  statusPublisher.cacheTiming(averageLoopUs, connection ? connection->getConnectionInterval() : 0);
+  // At MTU 23 a Status has three fragments. Bound work per poll, including retries.
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
     uint8_t packet[BleStatusPublisher::MaximumPacketLength];
     uint16_t length = 0;
     if (!statusPublisher.next(now, negotiatedMtu, packet, length)) break;
@@ -109,6 +135,8 @@ void onEvent(ble_evt_t* event) {
     cablePublisher.connect();
     negotiatedMtu = 23;
     mtuRequested = false;
+    intervalRequestPending = true;
+    intervalRequestAttempted = false;
     if (stopping || forgetting) {
       disconnectRequested = true;
       disconnectPending();
@@ -228,7 +256,7 @@ bool BleManager::begin(uint16_t revision) {
   }
   Bluefruit.setName(deviceName);
   Bluefruit.setEventCallback(onEvent);
-  Bluefruit.Periph.setConnInterval(12, 24);
+  setPreferredInterval();
   Bluefruit.Periph.setConnSlaveLatency(0);
   Bluefruit.Periph.setConnSupervisionTimeoutMS(4000);
   Bluefruit.Advertising.restartOnDisconnect(false);
@@ -243,6 +271,22 @@ bool BleManager::begin(uint16_t revision) {
   initialized = true;
   poll(millis());
   return true;
+}
+void BleManager::recordLoopStart(uint32_t nowUs) {
+  if (!initialized) return;
+  Lock lock;
+  if (!loopTimingStarted) {
+    loopTimingStarted = true;
+    loopWindowStartUs = nowUs;
+    return;
+  }
+  ++loopWindowCount;
+  const uint32_t elapsedUs = nowUs - loopWindowStartUs; // Wrap-safe micros delta.
+  if (elapsedUs >= 1000000) {
+    averageLoopUs = elapsedUs / loopWindowCount;
+    loopWindowStartUs = nowUs;
+    loopWindowCount = 0;
+  }
 }
 void BleManager::poll(uint32_t now) {
   if (!initialized) return;
@@ -260,6 +304,7 @@ void BleManager::poll(uint32_t now) {
     lastBondCheck = now;
   }
   advertise(now);
+  updateConnectionInterval(now);
   publishStatus(now);
   publishCable(now);
   disconnectPending();
@@ -330,6 +375,13 @@ void BleManager::cacheBattery(float volts) {
 void BleManager::setMode(uint8_t protocolMode) {
   if (!stateMutex) return;
   Lock lock;
+  if (protocolMode <= 6 && protocolMode != currentMode) {
+    currentMode = protocolMode;
+    setPreferredInterval();
+    intervalRequestPending = true;
+    intervalRequestAttempted = false; // A mode change gets an immediate attempt.
+    updateConnectionInterval(millis());
+  }
   statusPublisher.setMode(protocolMode);
   if (protocolMode <= 6) cablePublisher.setMode(protocolMode, statusPublisher.epoch());
 }
@@ -342,6 +394,7 @@ void BleManager::cacheCable(uint16_t faults, const float resistance[6], const in
 void BleManager::cacheCable(uint16_t, const float[6], const int[9], float) {}
 bool BleManager::begin(uint16_t) { return false; }
 void BleManager::poll(uint32_t) {}
+void BleManager::recordLoopStart(uint32_t) {}
 bool BleManager::startPairing(uint32_t) { return false; }
 void BleManager::cancelPairing() {}
 void BleManager::forgetBonds() {}

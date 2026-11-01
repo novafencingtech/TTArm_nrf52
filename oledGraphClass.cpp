@@ -1,4 +1,6 @@
 #include "oledGraphClass.h"
+#include <stdio.h>
+#include <string.h>
 
 //Sets the main buffer
 oledGraph::oledGraph(Adafruit_SSD1351 *tft,int X, int Y, int height, int width, float minValue, float maxValue){
@@ -366,7 +368,12 @@ void oledGraphLabel::setColors(int numBars, float values[], int colors[]){
   //memcpy(_valColors,colors,numBars*sizeof(colors[0]));  
 }
 
+void oledGraphLabel::invalidate() {
+  _hasRendered=false;
+}
+
 void oledGraphLabel::clearLabel() {
+  invalidate();
   _tft->setTextSize(_fontSize);
   _tft->setCursor(_locX, _locY);  
   for (int k=0; k<10; k++) {
@@ -377,10 +384,7 @@ void oledGraphLabel::clearLabel() {
 
 void oledGraphLabel::printLabel(const char *lab, float val, bool forceColor, uint16_t newColor) {
   uint16_t lblColor=cYELLOW;  
-  char strBuf[5]="";
-
-  _tft->setTextSize(_fontSize);
-  _tft->setCursor(_locX, _locY);  
+  char strBuf[8]="";
   
   if (val<0.0) {val =0.0f;}
 
@@ -397,23 +401,35 @@ void oledGraphLabel::printLabel(const char *lab, float val, bool forceColor, uin
     }
   } 
   
-  _tft->setTextColor(lblColor, cBLACK);
-  _tft->print(lab); _tft->print("="); //display connection string
-  //tft.setTextColor(valColor, BLACK);  //set the text color to right color, black background
   //Print ohms in a 4 character space
   //"XXXX", "XXX ", "XX  " or "X.XX"
   if (val > 500) {
-    _tft->print("OPEN");
-    //_openTxt=true;
-    return;
-  }
-
-  if (val>10) {    
+    strcpy(strBuf, "OPEN");
+  } else if (val>10) {
     dtostrf(val,-4,0,strBuf); //Don't display decimal points
   } else {
     //dtostrf(val+0.05,-4,1,strBuf);
     dtostrf(val,-4,1,strBuf);
   }
+
+  // Compare what will actually be drawn, rather than unrounded ADC values.
+  char text[sizeof(_lastText)];
+  const int textLength=snprintf(text, sizeof(text), "%s=%s", lab, strBuf);
+  const bool cacheable=textLength>=0 && size_t(textLength)<sizeof(text);
+  if (cacheable && _hasRendered && _lastColor==lblColor &&
+      _lastFontSize==_fontSize && strcmp(_lastText, text)==0) return;
+
+  _tft->setTextSize(_fontSize);
+  _tft->setCursor(_locX, _locY);
+  _tft->setTextColor(lblColor, cBLACK);
+  _tft->print(lab); _tft->print("=");
   _tft->print(strBuf);     
+  // Long labels still print in full; do not cache truncated text.
+  _hasRendered=cacheable;
+  if (cacheable) {
+    strcpy(_lastText, text);
+    _lastColor=lblColor;
+    _lastFontSize=_fontSize;
+  }
   return;
 }

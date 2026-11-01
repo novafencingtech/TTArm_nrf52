@@ -48,7 +48,7 @@ static void pairingPolicy() {
 static void identityAndGatt() {
   uint8_t bytes[68];
   BleIdentity::encode(bytes, 0x0102030405060708ULL, 0x1112131415161718ULL, 2, "ble1");
-  assert(bytes[0] == 2 && bytes[1] == 0 && bytes[2] == 1 && bytes[3] == 68);
+  assert(bytes[0] == 2 && bytes[1] == 1 && bytes[2] == 1 && bytes[3] == 68);
   for (int i = 0; i < 8; ++i) {
     assert(bytes[4 + i] == 8 - i); assert(bytes[12 + i] == 0x18 - i);
   }

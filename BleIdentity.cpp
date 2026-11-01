@@ -11,7 +11,7 @@ void put64(uint8_t* out, uint64_t value) {
 void BleIdentity::encode(uint8_t out[68], uint64_t deviceId, uint64_t bootId,
                          uint16_t revision, const char* build) {
   memset(out, 0, 68);
-  out[0] = 2; out[2] = 1; out[3] = 68;
+  out[0] = 2; out[1] = 1; out[2] = 1; out[3] = 68;
   put64(out + 4, deviceId); put64(out + 12, bootId);
   // Complete Cable stream plus battery diagnostics; other streams/commands deferred.
   out[20] = 0x01; // Capability bit 0: combined Cable stream.

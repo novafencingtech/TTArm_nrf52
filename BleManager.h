@@ -18,6 +18,7 @@ struct Status {
 };
 bool begin(uint16_t hardwareRevision);
 void poll(uint32_t now);
+void recordLoopStart(uint32_t nowUs); // Call once at the start of the main loop.
 bool startPairing(uint32_t now);
 void cancelPairing();
 void forgetBonds(); // Only after explicit on-device confirmation.

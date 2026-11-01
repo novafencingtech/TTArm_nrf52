@@ -17,6 +17,11 @@ void BleStatusPublisher::cacheDiagnostics(uint32_t count, uint32_t rateHz) {
   diagnosticsReady = true;
 }
 
+void BleStatusPublisher::cacheTiming(uint32_t loopUs, uint16_t intervalUnits) {
+  averageLoopUs = loopUs;
+  connectionIntervalUnits = intervalUnits;
+}
+
 bool BleStatusPublisher::cacheBattery(float volts) {
   // Comparisons also reject NaN/infinity before converting to an integer.
   if (!(volts >= 0 && volts <= 65.535f)) return false;
@@ -65,11 +70,13 @@ void BleStatusPublisher::form(uint32_t now, uint8_t limit) {
   logical[3] = currentMode;
   put16(logical + 4, nextSequence++);
   put32(logical + 6, now);
-  put16(logical + 10, 10);
+  put16(logical + 10, 16);
   put16(logical + 12, modeEpoch);
   put32(logical + 14, diagnosticCount);
   put32(logical + 18, diagnosticRate);
   put16(logical + 22, batteryMv);
+  put32(logical + 24, averageLoopUs);
+  put16(logical + 28, connectionIntervalUnits);
   transport = nextTransport++;
   valueLimit = limit;
   sliceLength = limit - 6;

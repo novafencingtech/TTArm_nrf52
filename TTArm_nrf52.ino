@@ -753,6 +753,7 @@ void wdt_init(void) {
 
 
 void loop() {
+  BleManager::recordLoopStart(micros());
   BleManager::poll(millis());
   // put your main code here, to run repeatedly:
   long t_now = millis();

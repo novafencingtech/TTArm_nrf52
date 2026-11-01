@@ -1,6 +1,8 @@
 # BLE Phase 2: diagnostic Status and target MTU
 
-Phase 2 publishes the specification's diagnostic Status message. Cable, Weapon,
+Current Status wire format is protocol 2.1; see [app sync and byte vectors](BLE_STATUS.md).
+
+Phase 2 publishes the specification's diagnostic Status message. Cable was added subsequently; Weapon,
 Probe, Lights, Capture and remote command execution remain disabled. Standard
 Just Works encryption and both nRF52832/nRF52840 support are retained.
 
@@ -19,8 +21,8 @@ Just Works encryption and both nRF52832/nRF52840 support are retained.
 4. Expect an immediate complete Status once initialized, then approximately one
    per second. Actual mode transitions also request immediate Status. Other
    characteristic subscriptions do not enable it. Disabling its CCCD stops it.
-5. At MTU 247 a notification value is **30 bytes**, not 66 or 244. At MTU 23 one
-   Status is two values of **20 and 16 bytes**. Reassemble those before decoding.
+5. At MTU 247 a notification value is **36 bytes**, not 66 or 244. At MTU 23 one
+   Status is three values of **20, 20, and 8 bytes**. Reassemble those before decoding.
 
 To force a fallback test, use a client/link that stays at MTU 23, or temporarily
 set `TTARM_BLE_TARGET_MTU` to 23 in `BleConfig.h`. No compiler override is needed.
@@ -31,24 +33,26 @@ Event length and notification queue depth remain small; DLE is not assumed.
 
 All integers are little-endian. Each notification starts with the six-byte
 fragment wrapper from specification section 6. The logical message is exactly
-24 bytes: the 14-byte live header followed by the 10-byte Status payload.
+30 bytes: the 14-byte live header followed by the 16-byte Status payload.
 
-For an unfragmented 30-byte notification:
+For an unfragmented 36-byte notification:
 
 | Value offset | Field |
 | --- | --- |
-| 0..5 | Transport ID, fragment index/count, logical length (24) |
+| 0..5 | Transport ID, fragment index/count, logical length (30) |
 | 6 | Protocol major (2) |
 | 7 | Status message type (1) |
 | 8 | Flags: 2 for immediate update, 0 for periodic |
 | 9 | Current protocol mode |
 | 10..11 | Connection-local Status sequence |
 | 12..15 | Publication uptime in milliseconds |
-| 16..17 | Payload length (10) |
+| 16..17 | Payload length (16) |
 | 18..19 | Boot-local mode epoch |
 | 20..23 | Existing serial diagnostic interval count N |
 | 24..27 | Existing serial rate, rounded to whole Hz |
 | 28..29 | Last valid measured battery millivolts |
+| 30..33 | Average loop-start interval, microseconds (0 = waiting) |
+| 34..35 | Negotiated connection interval, 1.25 ms units (0 = unknown) |
 
 N is not a lifetime acquisition count, and rate is not notification rate. The
 existing serial calculation updates about every five seconds and battery about
@@ -67,14 +71,14 @@ Battery sampling now saves/restores the actual ADC interrupt/scan state, includi
 Probe and Idle, instead of assuming only Cable/Weapon can be scanning. No extra
 battery acquisition is added.
 
-Full Identity advertises capability `0x00000200` (battery diagnostics). All
+Full Identity now advertises capability `0x00000201` (Cable plus battery diagnostics). Other
 measurement and command capability bits remain zero. Identity stays immutable
 throughout the connection, including while MTU negotiation changes capacity.
 
 ## Sender behavior
 
-- One immutable 24-byte logical frame is pending at most. There is no history
-  queue or dynamic allocation. Each foreground poll attempts at most two packets.
+- One immutable 30-byte logical frame is pending at most. There is no history
+  queue or dynamic allocation. Each foreground poll attempts at most three packets.
 - The stock SoftDevice HVX call returns immediately on backpressure. A rejected
   fragment is retried without advancing its index or changing its bytes. Unlike
   Bluefruit's convenience `notify()`, this path never waits for a queue credit.
@@ -92,7 +96,9 @@ throughout the connection, including while MTU negotiation changes capacity.
 - Shutdown requests a bounded best-effort Off Status before stopping the link;
   it does not wait for transmission or delay power-off.
 
-## Build and validation
+## Historical Phase 2 build and validation
+
+The results below predate the 2.1 timing additions; they are not validation of the new fields.
 
 Use the ordinary Arduino IDE build or the stock CLI helper; no core patch or
 special compiler flags are required:

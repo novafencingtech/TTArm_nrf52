@@ -6,7 +6,7 @@
 #ifndef TTARM_BLE_ENABLED
 #define TTARM_BLE_ENABLED 1
 #endif
-#define TTARM_BLE_BUILD "26-10-31-status"
+#define TTARM_BLE_BUILD "26-11-01-cable"
 #define TTARM_BLE_TARGET_MTU 247
 
 #endif

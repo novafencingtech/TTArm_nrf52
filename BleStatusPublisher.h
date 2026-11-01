@@ -12,6 +12,7 @@ public:
   bool cacheBattery(float volts);
   bool ready() const { return diagnosticsReady && batteryReady; }
   void setMode(uint8_t mode);
+  uint16_t epoch() const { return modeEpoch; }
   void connect();
   void disconnect();
   void setEnabled(bool enabled);

@@ -40,24 +40,25 @@ bool BleGatt::begin(uint64_t deviceId, uint64_t bootId, uint16_t revision, const
   for (auto chr : streams) {
     if (!add(*chr, CHR_PROPS_NOTIFY, 66, protectedAccess, SECMODE_NO_ACCESS)) return false;
   }
-  // Control and all measurement streams remain deferred in Phase 2.
+  // Control and the other measurement streams remain deferred.
   return add(control, CHR_PROPS_WRITE, 9, SECMODE_NO_ACCESS, SECMODE_NO_ACCESS) &&
          add(result, CHR_PROPS_INDICATE, 10, protectedAccess, SECMODE_NO_ACCESS);
 }
-uint16_t BleGatt::statusCccdHandle() { return status.handles().cccd_handle; }
-bool BleGatt::statusSubscribed(uint16_t connection) {
+namespace {
+bool subscribed(uint16_t connection, uint16_t cccd) {
   uint8_t bytes[2] = {};
   ble_gatts_value_t value = {};
   value.len = sizeof(bytes);
   value.p_value = bytes;
-  return sd_ble_gatts_value_get(connection, statusCccdHandle(), &value) == NRF_SUCCESS &&
+  return sd_ble_gatts_value_get(connection, cccd, &value) == NRF_SUCCESS &&
          value.len == 2 && (bytes[0] & 0x01) != 0;
 }
-BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t connection, const uint8_t* packet, uint16_t length) {
-  if (!statusSubscribed(connection)) return SendResult::Stopped;
+BleGatt::SendResult notify(uint16_t connection, BLECharacteristic& chr, const uint8_t* packet, uint16_t length) {
+  using SendResult = BleGatt::SendResult;
+  if (!subscribed(connection, chr.handles().cccd_handle)) return SendResult::Stopped;
   uint16_t acceptedLength = length;
   ble_gatts_hvx_params_t params = {};
-  params.handle = status.handles().value_handle;
+  params.handle = chr.handles().value_handle;
   params.type = BLE_GATT_HVX_NOTIFICATION;
   params.p_len = &acceptedLength;
   params.p_data = packet;
@@ -72,7 +73,21 @@ BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t connection, const uint8_t*
       result == BLE_ERROR_GATTS_SYS_ATTR_MISSING) return SendResult::Stopped;
   return SendResult::Restart;
 }
+}
+uint16_t BleGatt::statusCccdHandle() { return status.handles().cccd_handle; }
+uint16_t BleGatt::cableCccdHandle() { return cable.handles().cccd_handle; }
+bool BleGatt::statusSubscribed(uint16_t connection) { return subscribed(connection, statusCccdHandle()); }
+bool BleGatt::cableSubscribed(uint16_t connection) { return subscribed(connection, cableCccdHandle()); }
+BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t connection, const uint8_t* packet, uint16_t length) {
+  return notify(connection, status, packet, length);
+}
+BleGatt::SendResult BleGatt::tryNotifyCable(uint16_t connection, const uint8_t* packet, uint16_t length) {
+  return notify(connection, cable, packet, length);
+}
 #else
+uint16_t BleGatt::cableCccdHandle() { return 0; }
+bool BleGatt::cableSubscribed(uint16_t) { return false; }
+BleGatt::SendResult BleGatt::tryNotifyCable(uint16_t, const uint8_t*, uint16_t) { return SendResult::Stopped; }
 bool BleGatt::begin(uint64_t, uint64_t, uint16_t, const char*) { return false; }
 uint16_t BleGatt::statusCccdHandle() { return 0; }
 bool BleGatt::statusSubscribed(uint16_t) { return false; }

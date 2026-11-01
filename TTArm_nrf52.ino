@@ -780,6 +780,12 @@ void loop() {
       }
       if (updateReady) {
         updateCableState();
+        const float bleResistance[6] = {cableState.ohm_AA, cableState.ohm_AAMax,
+          cableState.ohm_BB, cableState.ohm_BBMax, cableState.ohm_CC, cableState.ohm_CCMax};
+        const int bleAdc[9] = {cableState.line_AA, cableState.line_AB, cableState.line_AC,
+          cableState.line_BA, cableState.line_BB, cableState.line_BC,
+          cableState.line_CA, cableState.line_CB, cableState.line_CC};
+        BleManager::cacheCable(cableState.statusByte, bleResistance, bleAdc, OPEN_CIRCUIT_VALUE);
         //toc = micros();
         //timing_seg = toc - tic;
         //updateOLED(BoxState);

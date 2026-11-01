@@ -2,6 +2,7 @@
 #include "BlePairingState.h"
 #include "BleGatt.h"
 #include "BleStatusPublisher.h"
+#include "BleCablePublisher.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,6 +16,7 @@ using namespace Adafruit_LittleFS_Namespace;
 namespace {
 BlePairingState session;
 BleStatusPublisher statusPublisher;
+BleCablePublisher cablePublisher;
 SemaphoreHandle_t stateMutex;
 bool initialized = false;
 bool stopping = false;
@@ -59,6 +61,27 @@ void refreshStatusSubscription() {
   statusPublisher.setEnabled(session.handle != BlePairingState::NoConnection && session.encrypted &&
       !stopping && !forgetting && !disconnectRequested && BleGatt::statusSubscribed(session.handle));
 }
+void refreshCableSubscription() {
+  cablePublisher.setEnabled(session.handle != BlePairingState::NoConnection && session.encrypted &&
+      !stopping && !forgetting && !disconnectRequested && BleGatt::cableSubscribed(session.handle));
+}
+void publishCable(uint32_t now) {
+  refreshCableSubscription();
+  // At most five fragments at MTU 23, no waits for notification credits.
+  for (uint8_t attempt = 0; attempt < 5; ++attempt) {
+    uint8_t packet[66];
+    uint16_t length = 0;
+    if (!cablePublisher.next(now, micros(), negotiatedMtu, packet, length)) break;
+    const auto sent = BleGatt::tryNotifyCable(session.handle, packet, length);
+    if (sent == BleGatt::SendResult::Sent) cablePublisher.accepted();
+    else if (sent == BleGatt::SendResult::Retry) break;
+    else if (sent == BleGatt::SendResult::Stopped) { cablePublisher.setEnabled(false); break; }
+    else { session.fail("Cable link error"); disconnectRequested = true; break; }
+  }
+  if (cablePublisher.needsReconnect()) {
+    session.fail("Cable MTU error"); disconnectRequested = true;
+  }
+}
 void publishStatus(uint32_t now) {
   refreshStatusSubscription();
   // At MTU 23 a Status has two fragments. Bound work per poll, including retries.
@@ -83,6 +106,7 @@ void onEvent(ble_evt_t* event) {
   if (event->header.evt_id == BLE_GAP_EVT_CONNECTED) {
     session.connect(handle, millis());
     statusPublisher.connect();
+    cablePublisher.connect();
     negotiatedMtu = 23;
     mtuRequested = false;
     if (stopping || forgetting) {
@@ -100,6 +124,7 @@ void onEvent(ble_evt_t* event) {
   switch (event->header.evt_id) {
     case BLE_GAP_EVT_DISCONNECTED:
       statusPublisher.disconnect();
+      cablePublisher.disconnect();
       session.disconnect(handle);
       negotiatedMtu = 23;
       mtuRequested = false;
@@ -139,6 +164,7 @@ void onEvent(ble_evt_t* event) {
     case BLE_GATTS_EVT_WRITE:
       // Observe every accepted CCCD toggle, including off/on between polls.
       if (event->evt.gatts_evt.params.write.handle == BleGatt::statusCccdHandle()) refreshStatusSubscription();
+      if (event->evt.gatts_evt.params.write.handle == BleGatt::cableCccdHandle()) refreshCableSubscription();
       break;
     default: break;
   }
@@ -235,6 +261,7 @@ void BleManager::poll(uint32_t now) {
   }
   advertise(now);
   publishStatus(now);
+  publishCable(now);
   disconnectPending();
 }
 bool BleManager::startPairing(uint32_t now) {
@@ -264,6 +291,7 @@ void BleManager::stop() {
   Lock lock;
   publishStatus(millis()); // Bounded best-effort pre-shutdown Status; never wait.
   statusPublisher.disconnect();
+  cablePublisher.disconnect();
   session.cancel();
   stopping = true;
   session.message = "BLE stopped";
@@ -303,8 +331,15 @@ void BleManager::setMode(uint8_t protocolMode) {
   if (!stateMutex) return;
   Lock lock;
   statusPublisher.setMode(protocolMode);
+  if (protocolMode <= 6) cablePublisher.setMode(protocolMode, statusPublisher.epoch());
+}
+void BleManager::cacheCable(uint16_t faults, const float resistance[6], const int adc[9], float open) {
+  if (!stateMutex) return;
+  Lock lock;
+  cablePublisher.cache(faults, resistance, adc, open);
 }
 #else
+void BleManager::cacheCable(uint16_t, const float[6], const int[9], float) {}
 bool BleManager::begin(uint16_t) { return false; }
 void BleManager::poll(uint32_t) {}
 bool BleManager::startPairing(uint32_t) { return false; }

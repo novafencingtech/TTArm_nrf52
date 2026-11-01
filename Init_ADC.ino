@@ -3,7 +3,10 @@ void InitializeADC(bool fastAcq) {
 
   nrf_saadc_enable(NRF_SAADC);
   nrf_saadc_int_disable(NRF_SAADC,NRF_SAADC_INT_ALL);
-  //NVIC_SetPriority(ADC_IRQn, 6);
+#if TTARM_BLE_ENABLED
+  // Priority 0 is reserved by the SoftDevice; keep acquisition preemptible.
+  NVIC_SetPriority(ADC_IRQn, 6);
+#endif
 
   //ADC Configuration code
   if (fastAcq) {
@@ -246,6 +249,7 @@ void initializeProbeChannels() {
 
 
 void calibrateSystem() {
+  BleManager::cancelPairing(); // Calibration owns the screen; no hidden passkey.
   bool cal_valid = false;
   long ave_data = 0;
   int adc_val;
@@ -299,6 +303,7 @@ void calibrateSystem() {
 
 
       while (digitalRead(BUTTON_PIN) == LOW) {
+        BleManager::poll(millis());
         NRF_WDT->RR[0] = WDT_RR_RR_Reload; //Reload watchdog register 0
       }; //Wait until button pressed
 
@@ -367,10 +372,12 @@ void calibrateSystem() {
   tft.println("  w/o save\n");
 
   while (digitalRead(BUTTON_PIN) == LOW) {
+    BleManager::poll(millis());
     NRF_WDT->RR[0] = WDT_RR_RR_Reload; //Reload watchdog register 0
   }; //Wait until button pressed
   tPress = millis();
   while (digitalRead(BUTTON_PIN) == HIGH) {
+    BleManager::poll(millis());
     NRF_WDT->RR[0] = WDT_RR_RR_Reload; //Reload watchdog register 0
     if ((millis() - tPress) > tPowerOffPress) {
       tft.setTextColor(RED, BLACK);

@@ -453,12 +453,16 @@ float gv(const char *s) {
 }
 
 
+bool oledLayoutInvalid = false;
+
+void invalidateOLED() { oledLayoutInvalid = true; }
+
 void labelTitle(const char *s, int color) {
   const int LBL_MAX = 15;
   static char lblBuffer[LBL_MAX + 1];
   static int oldColor = BLACK;
   //if (s == oldFault) return; //no change
-  if ((strcmp(lblBuffer, s) == 0) && (oldColor == color)) return;
+  if (!oledLayoutInvalid && (strcmp(lblBuffer, s) == 0) && (oldColor == color)) return;
   oldColor = color;
   if (strlen(s) <= LBL_MAX) {
     strcpy(lblBuffer, s);
@@ -520,6 +524,10 @@ void updateOLED(TestBoxModes Mode) {
   const unsigned long dispChangeHold = 500;  //Don't allow display to switch mode if this is set
   static long dispHoldTime = 500;            //Don't allow display to switch mode if this is set
   static unsigned long tDisplaySwitch = 0;   //Last time the display mode changed
+  if (oledLayoutInvalid) {
+    currentDisplayState = oldDisplayState = disp_unk;
+    tDisplaySwitch = millis() - dispChangeHold - 1;
+  }
   static unsigned long lastCapture = 0;
   bool inter;
   static long tIdleLEDOn = 0;
@@ -870,6 +878,8 @@ void updateOLED(TestBoxModes Mode) {
       }
       break;
   }
+  if (currentDisplayState != disp_off) BleUi::drawIndicator(tft);
+  oledLayoutInvalid = false;
 }
 
 void updateWeaponIndicators() {
@@ -877,6 +887,7 @@ void updateWeaponIndicators() {
   static int epeeIndicator = BLACK;
   static int foilInterIndicator = BLACK;
   static int epeeInterIndicator = BLACK;
+  if (oledLayoutInvalid) foilIndicator = epeeIndicator = foilInterIndicator = epeeInterIndicator = BLACK;
 
   if (weaponState.foilOn) {
     if (foilIndicator != RED) {
@@ -921,6 +932,7 @@ void updateWeaponTestLights() {
   static int epeeIndicator = BLACK;
   static int foilInterIndicator = BLACK;
   static int epeeInterIndicator = BLACK;
+  if (oledLayoutInvalid) foilIndicator = epeeIndicator = foilInterIndicator = epeeInterIndicator = BLACK;
   if (weaponState.foilOn) {
     if (foilIndicator != RED) {
       tft.fillRect(0, 28, 50, 50, RED);

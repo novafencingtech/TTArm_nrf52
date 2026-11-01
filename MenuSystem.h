@@ -41,6 +41,14 @@ public:
   // Update menu based on button interaction
   void updateMenu(bool buttonPressed, unsigned long currentTime);
 
+  enum BluetoothAction { PAIR_PHONE, CANCEL_PAIRING, FORGET_PHONES };
+  typedef void (*BluetoothActionCallback)(BluetoothAction action);
+  typedef void (*BluetoothRenderCallback)(Adafruit_SSD1351&, bool pairingPage, bool force);
+  void setBluetoothCallbacks(BluetoothActionCallback action, BluetoothRenderCallback render) {
+    bluetoothAction = action;
+    bluetoothRender = render;
+  }
+
   const char* displayTypeToString(displayType);
 
   void loadSettings();
@@ -54,6 +62,8 @@ public:
     return menuActive;
   }
   void activateMenu() {
+    currentPageIndex = 0;
+    initializeMenu();
     menuActive = true;
     menuChanged = true;
     return;
@@ -100,6 +110,12 @@ private:
   static const int8_t weaponSettingsPage = 3;
   static const int8_t advancedModePage = 1;
   static const int8_t calibratePage = 4;
+  static const int8_t bluetoothPage = 5;
+  static const int8_t bluetoothStatusPage = 6;
+  static const int8_t bluetoothPairPage = 7;
+  static const int8_t bluetoothForgetPage = 8;
+  BluetoothActionCallback bluetoothAction = nullptr;
+  BluetoothRenderCallback bluetoothRender = nullptr;
 
 
   // Initialize menu with entries

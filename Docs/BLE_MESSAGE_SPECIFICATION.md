@@ -1,6 +1,8 @@
 # TournaTest BLE Message Specification
 
-**Protocol: 2.0 · Specification revision: 1 · October 30, 2026**
+**Protocol: 2.0 · Specification revision: 2 · October 31, 2026**
+
+Revision 2 adopts standard encrypted Just Works pairing for both nRF52832 and nRF52840, per the compatibility-first implementation requirement. Passkey authentication and mandatory LE Secure Connections are removed. Full Identity's `required_security_level` is now 2; other field layouts and UUIDs are unchanged. Receivers must use this revised security contract.
 
 This is the common implementation contract for Nordic firmware and Android/iOS receivers. Implementers SHALL use the UUIDs, bytes and behavior in this document. It takes precedence over the [implementation plan](BLE_IMPLEMENTATION_PLAN.md) and historical drafts for wire-format questions. It is an agreed-design specification for implementation, not a claim of existing compatible firmware or hardware qualification. Protocol 1 draft codecs are incompatible.
 
@@ -63,13 +65,13 @@ Each Notify/Indicate characteristic has its own standard CCCD, UUID `00002902-00
 | Enable indication | `02 00` |
 | Disable | `00 00` |
 
-No custom subscription command exists. Enabled CCCDs, authenticated security and active mode determine publication. A disabled CCCD prevents delivery on its characteristic. Multiple mode subscriptions are allowed, but do not cause simultaneous acquisition modes.
+No custom subscription command exists. Enabled CCCDs, an encrypted connection and active mode determine publication. A disabled CCCD prevents delivery on its characteristic. Multiple mode subscriptions are allowed, but do not cause simultaneous acquisition modes.
 
 ### 2.2 Standard services and access
 
 Provide stack-managed Generic Access (`0x1800`) and Generic Attribute (`0x1801`). Use Service Changed (`0x2A05`) when firmware can change the GATT database, following the stack's bonded-client rules. Device Information (`0x180A`) may expose manufacturer, model and firmware/hardware revision strings with their standard characteristic UUIDs. Battery Service is not required; Status carries voltage.
 
-Public Protocol and nonidentifying product strings are publicly readable. Full Identity, Control writes and all measurement/result delivery require **LE Security Mode 1 Level 4**, authenticated LE Secure Connections with 128-bit-key encryption. CCCD reads are public; CCCD writes require authenticated encryption. A saved bond alone does not establish that the current connection is encrypted/authenticated. Refuse weaker protected access and pairing downgrade.
+Public Protocol and nonidentifying product strings are publicly readable. Full Identity, Control writes and all measurement/result delivery require **LE Security Mode 1 Level 2 or higher**: an encrypted connection using standard Just Works pairing/bonding. CCCD reads are public; CCCD writes require encryption. A saved bond alone does not establish that the current connection is encrypted. No passkey, MITM authentication, mandatory Secure Connections, or special cryptography backend is required. Use the stock stack's pairing and key-size negotiation; both legacy pairing on nRF52832 and Secure Connections when supported are acceptable.
 
 ## 3. Discovery, identity and connection parameters
 
@@ -83,7 +85,7 @@ Use legacy connectable advertising, LE1M, with the service UUID above. Recommend
 
 Use the SDK UUID encoder; BLE UUID wire order is separate from payload scalar encoding. Put a name such as `TTArm-A1B2C3` in scan response: 12 UTF-8 bytes plus two AD overhead bytes. The suffix is the device ID's low 24 bits and is only a discovery hint. Do not identify the box by name, RSSI or advertised MAC.
 
-Recommended configured intervals are 20 ms for the first 30 s of a local pairing window, 152.5 ms for the remainder of its 60 s, then 546.25 ms for known-device discovery. Stop connectable advertising while the one connection slot is occupied. A physical local action authorizes new pairing; show a fresh six-digit passkey on the box for entry on the phone. Saved bonds restore authenticated encryption without reentering that code. Bond removal/recovery remains a local box action.
+Recommended configured intervals are 20 ms for the first 30 s of a fast-discovery window, 152.5 ms for the remainder of its 60 s, then 546.25 ms for normal discovery/reconnection. The local Pair menu item starts this window. Stop connectable advertising while the one connection slot is occupied. Standard Just Works pairing is available whenever the box is advertising, including outside the fast-discovery window; no passkey entry is needed. Saved bonds restore encryption. Bond removal/recovery remains a local box action. The fast-discovery timer is a usability feature, not an enrollment authorization gate.
 
 ### 3.2 Physical device and boot identity
 
@@ -136,7 +138,7 @@ For 2.0, the client SHALL require exactly these bytes: `54 54 42 4C 02 00 01 00`
 | 59 | u8 | measurement_rate_Hz | 30 |
 | 60 | u16 | reserved1 | 0, event history deferred |
 | 62 | u16 | reserved2 | 0, capture transfer deferred |
-| 64 | u8 | required_security_level | 4 |
+| 64 | u8 | required_security_level | 2 |
 | 65 | u8 | identity_source | 0 factory ID, 1 provisioned override |
 | 66 | u16 | reserved3 | 0 |
 
@@ -462,7 +464,7 @@ Manual calibration may likewise keep bit 10 clear until its existing local routi
 ## 10. Session and device behavior
 
 1. Connect/discover service and read Public Protocol. Reject unsupported version/layout.
-2. Establish authenticated encryption; negotiate ATT MTU/DLE using the platform/stack. Configure receive handlers before subscriptions.
+2. Establish encryption using the platform's standard pairing/bonding flow; negotiate ATT MTU/DLE using the platform/stack. Configure receive handlers before subscriptions.
 3. Read/verify all Full Identity bytes and expected device ID. Use boot ID plus a new local connection generation to isolate state.
 4. Enable Command Result indications, then Status and supported mode notifications. Check every CCCD completion. Restored bonded CCCDs may already be enabled; do not assume subscriptions always begin at zero.
 5. The active mode publishes initialized data when subscribed; CCCDs are sufficient. There is no custom startup command. The receiver may discard protected notifications received before identity verification and await the immediate/current next state.

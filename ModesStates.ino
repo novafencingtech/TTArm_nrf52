@@ -593,6 +593,7 @@ void checkButtonState() {
       //lcd.print(F("  Power off  "));
       tftDisplayMessage("Power off");
       while (digitalRead(BUTTON_PIN) == HIGH) {
+        BleManager::poll(millis());
         NRF_WDT->RR[0] = WDT_RR_RR_Reload; //Reload watchdog register 0
         delay(100);        
         if ((millis() - tButtonPress) > tEnterCalibrationMode) {
@@ -624,6 +625,7 @@ void menuLoop() {
 
     menu.activateMenu();
     while (menu.isActive()) { 
+      BleManager::poll(millis());
       buttonPressed = digitalRead(BUTTON_PIN);  // Read the button state      
       delay(10);
       while (buttonPressed!=digitalRead(BUTTON_PIN)) {
@@ -636,10 +638,13 @@ void menuLoop() {
       NRF_WDT->RR[0] = WDT_RR_RR_Reload;  //Reload the watchdog timer
       //delay(20);
     }
+    tLastActive = millis();
+    invalidateOLED();
 }
 
 
 void setPowerOff() {
+  BleManager::stop();
   //setBoxMode('w');
   #if FAST_LED_ACTIVE
   lameLED=CRGB::Black;

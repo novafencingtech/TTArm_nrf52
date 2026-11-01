@@ -39,6 +39,8 @@ using namespace Adafruit_LittleFS_Namespace;
 #include "oledGraphClass.h"
 #include "oledDisplaySettings.h"
 #include "MenuSystem.h"
+#include "BleManager.h"
+#include "BleUi.h"
 
 #define DISPLAY_SPLASH_IMAGE 1
 #define FAST_LED_ACTIVE 1
@@ -59,7 +61,7 @@ Adafruit_LittleFS_Namespace::File file(InternalFS);
 bool isInitialized = false;
 
 static const char VERSION_NUM[16] = "1.2-1.7";  //Version-Adafruit Feather board version
-static const char BUILD_DATE[16] = "26-06-29d";
+static const char BUILD_DATE[16] = "BLE";
 
 #ifdef DISPLAY_SPLASH_IMAGE
 #include "splashScreenImage.c"
@@ -586,6 +588,14 @@ void wdtOverrideCallback(void* p_context) {
   //}
 }
 
+void handleBluetoothAction(MenuSystem::BluetoothAction action) {
+  switch (action) {
+    case MenuSystem::PAIR_PHONE: BleManager::startPairing(millis()); break;
+    case MenuSystem::CANCEL_PAIRING: BleManager::cancelPairing(); break;
+    case MenuSystem::FORGET_PHONES: BleManager::forgetBonds(); break;
+  }
+}
+
 void setup() {
   // put your setup code here, to run once:
   pinMode(POWER_CONTROL, OUTPUT);
@@ -639,6 +649,8 @@ void setup() {
 
   //Initialize the display
   InitializeDisplay();
+  menu.setBluetoothCallbacks(handleBluetoothAction, BleUi::renderPage);
+  BleManager::begin(TTArmBoardRev);
   //delay(100);
   //Hold the power on
   delay(250);
@@ -741,6 +753,7 @@ void wdt_init(void) {
 
 
 void loop() {
+  BleManager::poll(millis());
   // put your main code here, to run repeatedly:
   long t_now = millis();
   static long t_OLED_upd = 0;

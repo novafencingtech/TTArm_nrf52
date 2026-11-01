@@ -1,0 +1,242 @@
+#include "BleManager.h"
+#include "BlePairingState.h"
+#include "BleGatt.h"
+#include <Arduino.h>
+#include <stdio.h>
+#include <string.h>
+
+#if TTARM_BLE_ENABLED
+#include <bluefruit.h>
+#include <InternalFileSystem.h>
+#include <Adafruit_LittleFS.h>
+using namespace Adafruit_LittleFS_Namespace;
+
+namespace {
+BlePairingState session;
+SemaphoreHandle_t stateMutex;
+bool initialized = false;
+bool stopping = false;
+bool forgetting = false;
+bool forgetQueued = false;
+bool disconnectRequested = false;
+uint8_t savedBonds = 0;
+uint16_t advertisedInterval = 0;
+uint32_t lastBondCheck = 0;
+char deviceName[13] = {};
+char deviceIdText[17] = {};
+
+// Foreground and BLE event/callback tasks share display state; never an ADC ISR.
+struct Lock {
+  Lock() { xSemaphoreTake(stateMutex, portMAX_DELAY); }
+  ~Lock() { xSemaphoreGive(stateMutex); }
+};
+uint8_t countBonds() {
+  File directory(BOND_DIR_PRPH, FILE_O_READ, InternalFS);
+  if (!directory) return 0;
+  uint8_t count = 0;
+  File entry(InternalFS);
+  while ((entry = directory.openNextFile(FILE_O_READ))) {
+    if (!entry.isDirectory() && strlen(entry.name()) == 12 && count < 255) ++count;
+    entry.close();
+  }
+  directory.close();
+  return count;
+}
+void disconnectPending() {
+  if (disconnectRequested && session.handle != BlePairingState::NoConnection)
+    Bluefruit.disconnect(session.handle);
+}
+void onEvent(ble_evt_t* event) {
+  Lock lock;
+  const uint16_t handle = event->evt.common_evt.conn_handle;
+  if (event->header.evt_id == BLE_GAP_EVT_CONNECTED) {
+    session.connect(handle, millis());
+    if (stopping || forgetting) {
+      disconnectRequested = true;
+      disconnectPending();
+    } else {
+      // Stock pairing: a new phone uses Just Works; a saved phone restores keys.
+      BLEConnection* connection = Bluefruit.Connection(handle);
+      if (connection && connection->requestPairing()) session.message = "Pairing";
+    }
+    return;
+  }
+  if (handle != session.handle) return;
+  switch (event->header.evt_id) {
+    case BLE_GAP_EVT_DISCONNECTED:
+      session.disconnect(handle);
+      disconnectRequested = false;
+      advertisedInterval = 0;
+      break;
+    case BLE_GAP_EVT_CONN_SEC_UPDATE: {
+      const auto& security = event->evt.gap_evt.params.conn_sec_update.conn_sec;
+      if (security.sec_mode.sm == 1 && security.sec_mode.lv >= 2 && security.encr_key_size >= 7)
+        session.setEncrypted(handle);
+      else {
+        session.fail("Encryption failed");
+        disconnectRequested = true;
+      }
+      break;
+    }
+    case BLE_GAP_EVT_AUTH_STATUS:
+      if (event->evt.gap_evt.params.auth_status.auth_status != BLE_GAP_SEC_STATUS_SUCCESS) {
+        session.fail("Pairing failed");
+        disconnectRequested = true;
+      }
+      // The unmodified stack owns saving keys and restoring subscriptions.
+      break;
+    default: break;
+  }
+  disconnectPending();
+}
+void finishForget() {
+  // Queue on the stock callback worker AFTER disconnect, behind any pending
+  // stock bond/CCCD saves. No old save can recreate a record after this clear.
+  Bluefruit.Periph.clearBonds();
+  const uint8_t remaining = countBonds();
+  Lock lock;
+  savedBonds = remaining;
+  forgetting = forgetQueued = false;
+  session.message = remaining == 0 ? "Phones forgotten" : "Forget failed";
+}
+bool bootRandom(uint64_t& value) {
+  const uint32_t started = millis();
+  do {
+    uint8_t available = 0;
+    if (sd_rand_application_bytes_available_get(&available) == NRF_SUCCESS && available >= 8 &&
+        sd_rand_application_vector_get(reinterpret_cast<uint8_t*>(&value), 8) == NRF_SUCCESS && value)
+      return true;
+    delay(1);
+  } while (uint32_t(millis() - started) < 500);
+  return false;
+}
+void advertise(uint32_t now) {
+  if (session.handle != BlePairingState::NoConnection || stopping || forgetting) return;
+  const uint16_t interval = session.windowOpen ? (session.secondsLeft(now) > 30 ? 32 : 244) : 874;
+  if (Bluefruit.Advertising.isRunning() && advertisedInterval == interval) return;
+  Bluefruit.Advertising.stop();
+  Bluefruit.Advertising.setInterval(interval, interval); // 0.625 ms units
+  Bluefruit.Advertising.setFastTimeout(0);
+  if (!Bluefruit.Advertising.start(0)) {
+    session.message = "Advertise error";
+    advertisedInterval = 0;
+  } else advertisedInterval = interval;
+}
+}
+
+bool BleManager::begin(uint16_t revision) {
+  if (stateMutex) return initialized;
+  stateMutex = xSemaphoreCreateMutex();
+  if (!stateMutex) return false;
+  const uint64_t deviceId = (uint64_t(NRF_FICR->DEVICEID[1]) << 32) | NRF_FICR->DEVICEID[0];
+  snprintf(deviceIdText, sizeof(deviceIdText), "%08lX%08lX",
+           static_cast<unsigned long>(deviceId >> 32), static_cast<unsigned long>(deviceId));
+  snprintf(deviceName, sizeof(deviceName), "TTArm-%06lX", static_cast<unsigned long>(deviceId & 0xffffff));
+  Bluefruit.autoConnLed(false);
+  Bluefruit.configServiceChanged(true);
+  // Keep the stock MTU/queue defaults for this pairing-only phase.
+  Bluefruit.Security.setIOCaps(false, false, false);
+  Bluefruit.Security.setMITM(false); // Just Works on both 832 and 840; no passkey.
+  if (!deviceId || !Bluefruit.begin(1, 0)) { session.message = "BLE init failed"; return false; }
+  uint64_t bootId = 0;
+  if (!bootRandom(bootId) || !BleGatt::begin(deviceId, bootId, revision, TTARM_BLE_BUILD)) {
+    session.message = "BLE GATT failed";
+    return false;
+  }
+  Bluefruit.setName(deviceName);
+  Bluefruit.setEventCallback(onEvent);
+  Bluefruit.Periph.setConnInterval(12, 24);
+  Bluefruit.Periph.setConnSlaveLatency(0);
+  Bluefruit.Periph.setConnSupervisionTimeoutMS(4000);
+  Bluefruit.Advertising.restartOnDisconnect(false);
+  Bluefruit.Advertising.clearData();
+  Bluefruit.ScanResponse.clearData();
+  if (!Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE) ||
+      !Bluefruit.Advertising.addUuid(BleGatt::ServiceUuid) || !Bluefruit.ScanResponse.addName()) {
+    session.message = "BLE advert failed";
+    return false;
+  }
+  savedBonds = countBonds();
+  initialized = true;
+  poll(millis());
+  return true;
+}
+void BleManager::poll(uint32_t now) {
+  if (!initialized) return;
+  Lock lock;
+  if (session.expired(now)) session.cancel();
+  if (session.connectionExpired(now)) {
+    session.fail("Pairing timed out");
+    disconnectRequested = true;
+  }
+  disconnectPending();
+  if (forgetting && session.handle == BlePairingState::NoConnection && !forgetQueued)
+    forgetQueued = ada_callback(nullptr, 0, finishForget);
+  if (!forgetting && uint32_t(now - lastBondCheck) >= 1000) {
+    savedBonds = countBonds(); // Stock saves are asynchronous; show actual files.
+    lastBondCheck = now;
+  }
+  advertise(now);
+}
+bool BleManager::startPairing(uint32_t now) {
+  if (!initialized) return false;
+  Lock lock;
+  return !stopping && !forgetting && session.open(now);
+}
+void BleManager::cancelPairing() {
+  if (!initialized) return;
+  Lock lock;
+  session.cancel();
+  if (!session.encrypted && session.handle != BlePairingState::NoConnection) disconnectRequested = true;
+  disconnectPending();
+}
+void BleManager::forgetBonds() {
+  if (!initialized) return;
+  Lock lock;
+  session.cancel();
+  session.message = "Forgetting phones";
+  forgetting = true;
+  Bluefruit.Advertising.stop();
+  disconnectRequested = session.handle != BlePairingState::NoConnection;
+  disconnectPending();
+}
+void BleManager::stop() {
+  if (!initialized) return;
+  Lock lock;
+  session.cancel();
+  stopping = true;
+  session.message = "BLE stopped";
+  Bluefruit.Advertising.stop();
+  disconnectRequested = session.handle != BlePairingState::NoConnection;
+  disconnectPending();
+}
+BleManager::Status BleManager::getStatus(uint32_t now) {
+  Status out = {};
+  out.message = "BLE init failed";
+  if (!stateMutex) return out;
+  Lock lock;
+  out.available = initialized && !stopping;
+  out.connected = session.handle != BlePairingState::NoConnection;
+  out.encrypted = session.encrypted;
+  out.secondsLeft = session.secondsLeft(now);
+  out.pairing = out.secondsLeft > 0;
+  out.bonds = savedBonds;
+  out.generation = session.generation;
+  memcpy(out.name, deviceName, sizeof(out.name));
+  memcpy(out.deviceId, deviceIdText, sizeof(out.deviceId));
+  out.message = session.message;
+  return out;
+}
+#else
+bool BleManager::begin(uint16_t) { return false; }
+void BleManager::poll(uint32_t) {}
+bool BleManager::startPairing(uint32_t) { return false; }
+void BleManager::cancelPairing() {}
+void BleManager::forgetBonds() {}
+void BleManager::stop() {}
+BleManager::Status BleManager::getStatus(uint32_t) {
+  Status out = {};
+  out.message = "BLE disabled";
+  return out;
+}
+#endif

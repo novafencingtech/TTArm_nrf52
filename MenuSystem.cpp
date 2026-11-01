@@ -104,8 +104,9 @@ void MenuSystem::initializeMenu() {
     strcpy(menuItems[lameSettingsPage - 1], "Lame");
     strcpy(menuItems[weaponSettingsPage - 1], "Weapon");
     strcpy(menuItems[advancedModePage - 1], "User Mode");
+    strcpy(menuItems[bluetoothPage - 1], "Bluetooth");
     strcpy(exitText, "Exit");
-    menuItemsCount = 4;
+    menuItemsCount = 5;
     cursorItemIndex = 0;
     highlightItemIndex = menuItemsCount + 2;
   } else if (currentPageIndex == lameSettingsPage) {
@@ -150,6 +151,27 @@ void MenuSystem::initializeMenu() {
     }
     cursorItemIndex = 0;
     menuItemsCount = 2;
+  } else if (currentPageIndex == bluetoothPage) {
+    strcpy(menuHeading, "Bluetooth");
+    strcpy(menuItems[0], "Pair");
+    strcpy(menuItems[1], "Status");
+    strcpy(menuItems[2], "Forget");
+    strcpy(exitText, "Back");
+    menuItemsCount = 3;
+    cursorItemIndex = 0;
+    highlightItemIndex = -1;
+  } else if (currentPageIndex == bluetoothForgetPage) {
+    strcpy(menuHeading, "Forget?");
+    strcpy(menuItems[0], "Cancel");
+    strcpy(menuItems[1], "Confirm");
+    strcpy(exitText, "Back");
+    menuItemsCount = 2;
+    cursorItemIndex = 0; // Never preselect destructive confirmation.
+    highlightItemIndex = -1;
+  } else if (currentPageIndex == bluetoothPairPage || currentPageIndex == bluetoothStatusPage) {
+    menuItemsCount = 0;
+    cursorItemIndex = 0;
+    highlightItemIndex = -1;
   }
 }
 
@@ -164,175 +186,79 @@ void MenuSystem::switchItem() {
 
 // Confirm selection and take action
 void MenuSystem::confirmSelection() {
-  char* selectedItem = menuItems[cursorItemIndex];
-  Serial.print("Confirming setting: ");
-  Serial.println(selectedItem);
-
-  if (currentPageIndex == 0) {
-    switch (cursorItemIndex) {
-      case (advancedModePage - 1):
-        currentPageIndex = advancedModePage;
-        cursorItemIndex = 0;
-        break;
-      case (lameSettingsPage - 1):
-        currentPageIndex = lameSettingsPage;
-        cursorItemIndex = 0;
-        break;
-      case (weaponSettingsPage - 1):
-        currentPageIndex = weaponSettingsPage;
-        cursorItemIndex = 0;
-        break;
-      case (calibratePage - 1):
-        calibrate();
-        break;
-      case calibratePage:
-        menuActive = false;
-        if (settingsChanged) {
-          saveSettings();
-        }
-        break;
-      default:
-        // Optional: handle any unexpected cursorItemIndex values
-        break;
-    }
+  if (currentPageIndex == bluetoothPairPage || currentPageIndex == bluetoothStatusPage) {
+    if (currentPageIndex == bluetoothPairPage && bluetoothAction) bluetoothAction(CANCEL_PAIRING);
+    currentPageIndex = bluetoothPage;
+  } else if (cursorItemIndex == menuItemsCount) {
+    // Exit/Back is a separate row, never an element of menuItems.
+    if (currentPageIndex == 0) {
+      menuActive = false;
+      if (settingsChanged) saveSettings();
+    } else if (currentPageIndex == bluetoothForgetPage) currentPageIndex = bluetoothPage;
+    else currentPageIndex = 0;
+  } else if (currentPageIndex == 0) {
+    if (cursorItemIndex == calibratePage - 1) calibrate();
+    else currentPageIndex = cursorItemIndex + 1;
+  } else if (currentPageIndex == bluetoothPage) {
+    if (cursorItemIndex == 0) {
+      if (bluetoothAction) bluetoothAction(PAIR_PHONE);
+      currentPageIndex = bluetoothPairPage;
+    } else if (cursorItemIndex == 1) currentPageIndex = bluetoothStatusPage;
+    else currentPageIndex = bluetoothForgetPage;
+  } else if (currentPageIndex == bluetoothForgetPage) {
+    if (cursorItemIndex == 1 && bluetoothAction) bluetoothAction(FORGET_PHONES);
+    currentPageIndex = cursorItemIndex == 1 ? bluetoothStatusPage : bluetoothPage;
+  } else {
+    if (currentPageIndex == lameSettingsPage) settings.lameDisplay = cursorItemIndex == 0 ? GRAPH : NUMERIC;
+    if (currentPageIndex == weaponSettingsPage) settings.weaponDisplay = cursorItemIndex == 0 ? GRAPH : NUMERIC;
+    if (currentPageIndex == advancedModePage) settings.advancedMode = cursorItemIndex == 1;
+    settingsChanged = true;
   }
-
-  if (currentPageIndex == lameSettingsPage) {
-    // Back to root menu
-    if (cursorItemIndex == menuItemsCount) {
-      currentPageIndex = 0;
-      cursorItemIndex = 0;
-    } else {
-      // Issue 3 Fix: Corrected strcmp conditions to check for equality
-      if (strcmp(selectedItem, "Graph") == 0) {
-        settingsChanged = true;
-        settings.lameDisplay = GRAPH;
-      }
-      if (strcmp(selectedItem, "Numeric") == 0) {
-        settingsChanged = true;
-        settings.lameDisplay = NUMERIC;
-      }
-      //highlightItemIndex = cursorItemIndex;
-    }
-  }
-  if (currentPageIndex == weaponSettingsPage) {
-    // Back to root menu
-    if (cursorItemIndex == menuItemsCount) {
-      currentPageIndex = 0;
-      cursorItemIndex = 0;
-    } else {
-      // Issue 3 Fix: Corrected strcmp conditions to check for equality
-      if (strcmp(selectedItem, "Graph") == 0) {
-        settingsChanged = true;
-        settings.weaponDisplay = GRAPH;
-      }
-      if (strcmp(selectedItem, "Numeric") == 0) {
-        settingsChanged = true;
-        settings.weaponDisplay = NUMERIC;
-      }
-      //highlightItemIndex = cursorItemIndex;
-    }
-  }
-  if (currentPageIndex == advancedModePage) {
-    // Back to root menu
-    if (cursorItemIndex == menuItemsCount) {
-      currentPageIndex = 0;
-      cursorItemIndex = 0;
-    } else {
-      // Issue 3 Fix: Corrected strcmp conditions to check for equality
-      if (strcmp(selectedItem, "Basic") == 0) {
-        settingsChanged = true;
-        settings.advancedMode = false;
-      }
-      if (strcmp(selectedItem, "Advanced") == 0) {
-        settingsChanged = true;
-        settings.advancedMode = true;
-      }
-      //highlightItemIndex = cursorItemIndex;
-    }
-  }
-
   menuChanged = true;
-  initializeMenu();  // Refresh menu after page change
+  initializeMenu();
 }
 
-// Render the menu on the screen
+// Render the menu on the screen.
 void MenuSystem::renderMenu() {
-  // If nothing changed, do not re-draw
+  if (menuActive && (currentPageIndex == bluetoothPairPage || currentPageIndex == bluetoothStatusPage)) {
+    if (bluetoothRender) bluetoothRender(display, currentPageIndex == bluetoothPairPage, menuChanged);
+    menuChanged = false;
+    return;
+  }
   if (!menuChanged) return;
-  /*
-  Serial.println("Rendering menu");
-  Serial.print("Page: ");
-  Serial.print(currentPageIndex);
-  Serial.print("\tCursor: ");
-  Serial.print(cursorItemIndex);
-  Serial.print("\tHighlight: ");
-  Serial.print(highlightItemIndex);
-*/
+  menuChanged = false;
   display.fillScreen(menuColorBLACK);
-
   if (!menuActive) return;
-
-  display.setTextSize(2);  // Set text size to 2 for larger text
-
-  // Draw the menu header
+  display.setFont(nullptr);
+  display.setTextWrap(false);
+  display.setTextSize(2);
   display.setCursor(0, 0);
   display.setTextColor(menuColorWHITE);
-  switch (currentPageIndex) {
-    case 0:
-      display.print("Settings:");
-      break;
-    case lameSettingsPage:
-      display.print("Lame");
-      break;
-    case weaponSettingsPage:
-      display.print("Weapon");
-      break;
-    case advancedModePage:
-      display.print("Box Mode");
-      break;
-    default:
-      // Optional: Handle unexpected cases
-      display.print("Unknown Page");
-      break;
+  display.print(menuHeading);
+  // Five root items plus Exit fit below the heading on the 128px panel.
+  const int rowHeight = 18;
+  const int firstRow = 20;
+  for (int i = 0; i < menuItemsCount; ++i) {
+    const int y = firstRow + i * rowHeight;
+    display.setTextColor(i == cursorItemIndex ? menuColorPaleBLUE : menuColorGREY);
+    if (i == cursorItemIndex) { display.setCursor(0, y); display.print('>'); }
+    display.setCursor(15, y); display.print(menuItems[i]);
+    if (i == highlightItemIndex)
+      display.drawRect(13, y - 1, 12 * strlen(menuItems[i]) + 4, 18, menuColorCYAN);
   }
-
-  // Draw each menu item
-  for (int i = 0; i < menuItemsCount; i++) {
-    if (i == cursorItemIndex) {
-      display.setTextColor(menuColorPaleBLUE);  // Active selection color
-      display.setCursor(0, (i + 1) * 22);       // Increase line spacing for larger text size
-      display.print("> ");
-    } else {
-      display.setTextColor(menuColorGREY);
-    }
-    display.setCursor(15, (i + 1) * 22);  // Position the text
-    display.print(menuItems[i]);
-
-    // If the item is a stored setting, draw a light blue-green box around it
-    //std::string currentSetting = querySetting(menuItems[i]);
-    if (i == highlightItemIndex) {
-      display.setTextColor(menuColorCYAN);  // Light blue-green color for settings
-      display.setCursor(15, (i + 1) * 22);  // Print the setting next to the item
-      display.print(menuItems[i]);
-
-      // Draw a white box around the setting
-      display.drawRect(15 - 2, (i + 1) * 22 - 2, 12 * strlen(menuItems[i]) + 4, 16 + 4, menuColorCYAN);
-    }
-  }
-
-  // Print the exit button at the bottom
-  if (cursorItemIndex == menuItemsCount) {
-    display.setCursor(70 - 14, 5 * 22);
-    display.setTextColor(menuColorPaleBLUE);
-    display.print(">");
-  }
-  display.setCursor(70, 5 * 22);
+  const int exitY = firstRow + menuItemsCount * rowHeight;
   display.setTextColor(menuColorRED);
-  display.print(exitText);
-
-  menuChanged = false;
-  //display.display();
+  if (cursorItemIndex == menuItemsCount) {
+    display.setTextColor(menuColorPaleBLUE);
+    display.setCursor(56, exitY); display.print('>');
+  }
+  display.setCursor(70, exitY); display.print(exitText);
+  if (currentPageIndex == bluetoothForgetPage) {
+    display.setTextSize(1);
+    display.setCursor(0, 91); display.print("Remove ALL phones");
+    display.setCursor(0, 104); display.print("Also forget on phone");
+  }
+  display.setTextWrap(true);
 }
 
 // Draw a white box around a setting

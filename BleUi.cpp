@@ -1,13 +1,14 @@
 #include "BleUi.h"
 #include "BleManager.h"
 #include <string.h>
+#include <stdio.h>
 
 void BleUi::renderPage(Adafruit_SSD1351& display, bool pairingPage, bool force) {
   const auto status = BleManager::getStatus(millis());
   static BleManager::Status previous = {};
   if (!force && previous.message == status.message && previous.connected == status.connected &&
       previous.encrypted == status.encrypted && previous.secondsLeft == status.secondsLeft &&
-      previous.bonds == status.bonds && previous.generation == status.generation) return;
+      previous.bonds == status.bonds && previous.generation == status.generation && previous.mtu == status.mtu) return;
   previous = status;
   display.fillScreen(0);
   display.setFont(nullptr);
@@ -20,6 +21,10 @@ void BleUi::renderPage(Adafruit_SSD1351& display, bool pairingPage, bool force) 
   display.setCursor(0, 36); display.print(status.name);
   display.setCursor(0, 47); display.print(status.deviceId);
   display.setCursor(0, 66); display.print("No passkey needed");
+  char mtuText[22];
+  if (status.connected) snprintf(mtuText, sizeof(mtuText), "MTU: %u / %u", unsigned(status.mtu), unsigned(TTARM_BLE_TARGET_MTU));
+  else snprintf(mtuText, sizeof(mtuText), "MTU: -- / %u", unsigned(TTARM_BLE_TARGET_MTU));
+  display.setCursor(0, 78); display.print(mtuText);
   display.setTextSize(1);
   display.setTextColor(0xffff, 0);
   display.setCursor(0, 91);

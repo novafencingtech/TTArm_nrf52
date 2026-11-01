@@ -1335,16 +1335,22 @@ void writeSerialOutput(TestBoxModes Mode) {
   outputString[0] = '\0';  //Reset the output string
 
   if ((t_now - tHeartBeat) > tHeartBeatInterval) {
+    const long diagnosticCount = numSamples; // One coherent copy for serial and BLE.
     float dt = (float(t_now - t_last_upd) * 1.0e-3);
-    EffSampleRate = float(numSamples) / dt;
+    EffSampleRate = float(diagnosticCount) / dt;
 
     dtostrf(EffSampleRate, 5, 0, tempString1);  //Effective sample rate
     dtostrf(batteryVoltage, 5, 2, tempString2);
-    snprintf(outputString, bufferSize, "t=%ld, N=%ld, %sHz, Bat=%sV\r\n", t_now, numSamples, tempString1, tempString2);
+    snprintf(outputString, bufferSize, "t=%ld, N=%ld, %sHz, Bat=%sV\r\n", t_now, diagnosticCount, tempString1, tempString2);
     Serial.write(outputString);
     tHeartBeat = millis();
     t_last_upd = millis();
     numSamples = 0;
+    // Reuse the serial formatter's whole-Hz rounding, after the existing reset.
+    char* rateEnd = nullptr;
+    const uint32_t diagnosticRate = strtoul(tempString1, &rateEnd, 10);
+    if (diagnosticCount >= 0 && EffSampleRate >= 0 && rateEnd != tempString1 && *rateEnd == '\0')
+      BleManager::cacheDiagnostics(uint32_t(diagnosticCount), diagnosticRate);
   }
 
   outputString[0] = '\0';  //Reset the outputString

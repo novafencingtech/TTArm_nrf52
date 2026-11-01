@@ -1,6 +1,7 @@
 #include "BleManager.h"
 #include "BlePairingState.h"
 #include "BleGatt.h"
+#include "BleStatusPublisher.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +14,7 @@ using namespace Adafruit_LittleFS_Namespace;
 
 namespace {
 BlePairingState session;
+BleStatusPublisher statusPublisher;
 SemaphoreHandle_t stateMutex;
 bool initialized = false;
 bool stopping = false;
@@ -22,6 +24,8 @@ bool disconnectRequested = false;
 uint8_t savedBonds = 0;
 uint16_t advertisedInterval = 0;
 uint32_t lastBondCheck = 0;
+uint16_t negotiatedMtu = 23;
+bool mtuRequested = false;
 char deviceName[13] = {};
 char deviceIdText[17] = {};
 
@@ -46,15 +50,46 @@ void disconnectPending() {
   if (disconnectRequested && session.handle != BlePairingState::NoConnection)
     Bluefruit.disconnect(session.handle);
 }
+void requestMtu(uint16_t handle) {
+  if (mtuRequested) return;
+  BLEConnection* connection = Bluefruit.Connection(handle);
+  if (connection) mtuRequested = connection->requestMtuExchange(TTARM_BLE_TARGET_MTU);
+}
+void refreshStatusSubscription() {
+  statusPublisher.setEnabled(session.handle != BlePairingState::NoConnection && session.encrypted &&
+      !stopping && !forgetting && !disconnectRequested && BleGatt::statusSubscribed(session.handle));
+}
+void publishStatus(uint32_t now) {
+  refreshStatusSubscription();
+  // At MTU 23 a Status has two fragments. Bound work per poll, including retries.
+  for (uint8_t attempt = 0; attempt < 2; ++attempt) {
+    uint8_t packet[BleStatusPublisher::MaximumPacketLength];
+    uint16_t length = 0;
+    if (!statusPublisher.next(now, negotiatedMtu, packet, length)) break;
+    const auto sent = BleGatt::tryNotifyStatus(session.handle, packet, length);
+    if (sent == BleGatt::SendResult::Sent) statusPublisher.accepted();
+    else if (sent == BleGatt::SendResult::Retry) break;
+    else if (sent == BleGatt::SendResult::Stopped) { statusPublisher.setEnabled(false); break; }
+    else { session.fail("Status link error"); disconnectRequested = true; break; }
+  }
+  if (statusPublisher.needsReconnect()) {
+    session.fail("Status MTU error");
+    disconnectRequested = true;
+  }
+}
 void onEvent(ble_evt_t* event) {
   Lock lock;
   const uint16_t handle = event->evt.common_evt.conn_handle;
   if (event->header.evt_id == BLE_GAP_EVT_CONNECTED) {
     session.connect(handle, millis());
+    statusPublisher.connect();
+    negotiatedMtu = 23;
+    mtuRequested = false;
     if (stopping || forgetting) {
       disconnectRequested = true;
       disconnectPending();
     } else {
+      requestMtu(handle);
       // Stock pairing: a new phone uses Just Works; a saved phone restores keys.
       BLEConnection* connection = Bluefruit.Connection(handle);
       if (connection && connection->requestPairing()) session.message = "Pairing";
@@ -64,15 +99,19 @@ void onEvent(ble_evt_t* event) {
   if (handle != session.handle) return;
   switch (event->header.evt_id) {
     case BLE_GAP_EVT_DISCONNECTED:
+      statusPublisher.disconnect();
       session.disconnect(handle);
+      negotiatedMtu = 23;
+      mtuRequested = false;
       disconnectRequested = false;
       advertisedInterval = 0;
       break;
     case BLE_GAP_EVT_CONN_SEC_UPDATE: {
       const auto& security = event->evt.gap_evt.params.conn_sec_update.conn_sec;
-      if (security.sec_mode.sm == 1 && security.sec_mode.lv >= 2 && security.encr_key_size >= 7)
+      if (security.sec_mode.sm == 1 && security.sec_mode.lv >= 2 && security.encr_key_size >= 7) {
         session.setEncrypted(handle);
-      else {
+        requestMtu(handle); // Retry if the initial request was temporarily busy.
+      } else {
         session.fail("Encryption failed");
         disconnectRequested = true;
       }
@@ -85,8 +124,25 @@ void onEvent(ble_evt_t* event) {
       }
       // The unmodified stack owns saving keys and restoring subscriptions.
       break;
+    case BLE_GATTS_EVT_EXCHANGE_MTU_REQUEST:
+      negotiatedMtu = event->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu;
+      if (negotiatedMtu > TTARM_BLE_TARGET_MTU) negotiatedMtu = TTARM_BLE_TARGET_MTU;
+      mtuRequested = true;
+      break;
+    case BLE_GATTC_EVT_EXCHANGE_MTU_RSP:
+      if (event->evt.gattc_evt.gatt_status == BLE_GATT_STATUS_SUCCESS) {
+        negotiatedMtu = event->evt.gattc_evt.params.exchange_mtu_rsp.server_rx_mtu;
+        if (negotiatedMtu > TTARM_BLE_TARGET_MTU) negotiatedMtu = TTARM_BLE_TARGET_MTU;
+        mtuRequested = true;
+      }
+      break;
+    case BLE_GATTS_EVT_WRITE:
+      // Observe every accepted CCCD toggle, including off/on between polls.
+      if (event->evt.gatts_evt.params.write.handle == BleGatt::statusCccdHandle()) refreshStatusSubscription();
+      break;
     default: break;
   }
+  refreshStatusSubscription(); // Also handles restored bonded CCCDs after encryption.
   disconnectPending();
 }
 void finishForget() {
@@ -134,7 +190,8 @@ bool BleManager::begin(uint16_t revision) {
   snprintf(deviceName, sizeof(deviceName), "TTArm-%06lX", static_cast<unsigned long>(deviceId & 0xffffff));
   Bluefruit.autoConnLed(false);
   Bluefruit.configServiceChanged(true);
-  // Keep the stock MTU/queue defaults for this pairing-only phase.
+  // Runtime stack configuration; no core patch, linker or compiler override.
+  Bluefruit.configPrphConn(TTARM_BLE_TARGET_MTU, BLE_GAP_EVENT_LENGTH_DEFAULT, 1, 1);
   Bluefruit.Security.setIOCaps(false, false, false);
   Bluefruit.Security.setMITM(false); // Just Works on both 832 and 840; no passkey.
   if (!deviceId || !Bluefruit.begin(1, 0)) { session.message = "BLE init failed"; return false; }
@@ -177,6 +234,8 @@ void BleManager::poll(uint32_t now) {
     lastBondCheck = now;
   }
   advertise(now);
+  publishStatus(now);
+  disconnectPending();
 }
 bool BleManager::startPairing(uint32_t now) {
   if (!initialized) return false;
@@ -203,6 +262,8 @@ void BleManager::forgetBonds() {
 void BleManager::stop() {
   if (!initialized) return;
   Lock lock;
+  publishStatus(millis()); // Bounded best-effort pre-shutdown Status; never wait.
+  statusPublisher.disconnect();
   session.cancel();
   stopping = true;
   session.message = "BLE stopped";
@@ -222,10 +283,26 @@ BleManager::Status BleManager::getStatus(uint32_t now) {
   out.pairing = out.secondsLeft > 0;
   out.bonds = savedBonds;
   out.generation = session.generation;
+  out.mtu = out.connected ? negotiatedMtu : 0;
   memcpy(out.name, deviceName, sizeof(out.name));
   memcpy(out.deviceId, deviceIdText, sizeof(out.deviceId));
   out.message = session.message;
   return out;
+}
+void BleManager::cacheDiagnostics(uint32_t count, uint32_t roundedRateHz) {
+  if (!stateMutex) return;
+  Lock lock;
+  statusPublisher.cacheDiagnostics(count, roundedRateHz);
+}
+void BleManager::cacheBattery(float volts) {
+  if (!stateMutex) return;
+  Lock lock;
+  statusPublisher.cacheBattery(volts);
+}
+void BleManager::setMode(uint8_t protocolMode) {
+  if (!stateMutex) return;
+  Lock lock;
+  statusPublisher.setMode(protocolMode);
 }
 #else
 bool BleManager::begin(uint16_t) { return false; }
@@ -234,6 +311,9 @@ bool BleManager::startPairing(uint32_t) { return false; }
 void BleManager::cancelPairing() {}
 void BleManager::forgetBonds() {}
 void BleManager::stop() {}
+void BleManager::cacheDiagnostics(uint32_t, uint32_t) {}
+void BleManager::cacheBattery(float) {}
+void BleManager::setMode(uint8_t) {}
 BleManager::Status BleManager::getStatus(uint32_t) {
   Status out = {};
   out.message = "BLE disabled";

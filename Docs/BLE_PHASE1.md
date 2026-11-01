@@ -1,5 +1,9 @@
 # BLE Phase 1: basic pairing and status
 
+The user verified this Phase 1 baseline working. [Phase 2](BLE_PHASE2.md) adds
+diagnostic Status notifications and a requested ATT MTU of 247. The remainder
+of this page records the Phase 1 behavior and validation baseline.
+
 This version supports **both nRF52832 and nRF52840** using the stock Adafruit
 Bluefruit APIs and standard Just Works pairing/bonding. No core patch, passkey,
 software ECC backend, architecture guard, or special compiler flag is required.

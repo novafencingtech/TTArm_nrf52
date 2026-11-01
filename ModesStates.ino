@@ -29,6 +29,7 @@ void setWeaponTestMode() {
   //tLastActive = millis();
 
   BoxState = WPN_TEST;
+  BleManager::setMode(1);
   
 }
 
@@ -65,12 +66,14 @@ void setWeaponResistanceMode(bool enableCapture) {
     EpeeADC.hsBuffer.ResetTrigger();  
 
     BoxState = HIT_CAPTURE;
+    BleManager::setMode(3);
   } else {
     EpeeADC.bufferEnabled=false;
     EpeeADC.hsBuffer.ResetTrigger();
     FoilADC.bufferEnabled=false;
     FoilADC.hsBuffer.ResetTrigger();
     BoxState = WPN_GRAPH;
+    BleManager::setMode(2);
   }
   
   StartADC();
@@ -97,6 +100,7 @@ void setCableTestMode() {
   //weaponState.cableDC = true;
   
   BoxState = CABLE;
+  BleManager::setMode(0);
   //tLastActive = millis();
   //updateCableState();
   StartADC();
@@ -123,6 +127,7 @@ void setProbeMode() {
   weaponState.cableDC = true;
   
   BoxState = PROBE;
+  BleManager::setMode(4);
   StartADC();
 }
 
@@ -295,6 +300,7 @@ void setBoxMode(TestBoxModes newMode) {
 void setIdleMode() {
   updateIdleMode();
   BoxState = BOX_IDLE;
+  BleManager::setMode(5);
 }
 
 void updateIdleMode() {
@@ -644,6 +650,8 @@ void menuLoop() {
 
 
 void setPowerOff() {
+  BoxState = BOX_OFF;
+  BleManager::setMode(6);
   BleManager::stop();
   //setBoxMode('w');
   #if FAST_LED_ACTIVE
@@ -665,7 +673,7 @@ void setPowerOff() {
 
 void CheckBatteryStatus() {
   int batteryCnts = 0;
-  bool ADCActive = false;
+  bool ADCActive = NVIC_GetEnableIRQ(ADC_IRQn) != 0;
   long ave_data = 0;
   int sampleCount = 0;
   int adc_val = 0;
@@ -673,17 +681,10 @@ void CheckBatteryStatus() {
   byte oldAIn = 0;
   nrf_saadc_value_t *adcRead;
 
-  switch (BoxState) {
-    case CABLE:
-    case HIT_CAPTURE:
-    case WPN_GRAPH:
-      ADCActive = true;
-      StopADC();
-      oldAIn = NRF_SAADC->CH[ADC_UNIT].PSELP;
-      break;
-    case WPN_TEST:
-      ADCActive = false;
-      break;
+  // Preserve the actual scan state, including Probe/Idle, during battery reads.
+  if (ADCActive) {
+    StopADC();
+    oldAIn = NRF_SAADC->CH[ADC_UNIT].PSELP;
   }
   //BatteryCheck=true;
 
@@ -719,5 +720,6 @@ void CheckBatteryStatus() {
 
   //Serial.print(F("Battery counts = ")); Serial.println(batteryCnts);
   batteryVoltage = 2.0 * (float(batteryCnts) * 0.6 * 4 / 4095); //Assuming internal reference
+  BleManager::cacheBattery(batteryVoltage);
 
 }

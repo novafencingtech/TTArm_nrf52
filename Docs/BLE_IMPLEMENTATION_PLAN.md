@@ -40,6 +40,8 @@ Compilation alone is not hardware qualification.
 
 ## Phase 2: diagnostic Status only
 
+Implementation details and immediate phone-test instructions: [BLE_PHASE2.md](BLE_PHASE2.md).
+
 - Add explicit encoders for the 14-byte header and 6-byte notification wrapper.
 - Cache the existing serial diagnostic count/rate and battery measurement; do not
   recalculate/reset counts or trigger acquisition for BLE. Wait until initialized.

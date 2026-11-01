@@ -1,4 +1,4 @@
-"""Compile and run the portable Phase 1 tests; requires a host C++17 compiler."""
+"""Compile and run portable BLE tests; requires a host C++17 compiler."""
 from pathlib import Path
 import argparse
 import shutil
@@ -18,6 +18,11 @@ def main():
     source = ["tests/ble_phase1_test.cpp", "BlePairingState.cpp", "BleIdentity.cpp", "BleGatt.cpp", "BleUi.cpp", "MenuSystem.cpp"]
     subprocess.run([args.compiler, "-std=c++17", "-Itests/fakes", "-I.",
                     *source, "-o", str(output)], cwd=ROOT, check=True)
+    subprocess.run([str(output)], cwd=ROOT, check=True)
+    output = output.with_name("ble_status_test.exe")
+    subprocess.run([args.compiler, "-std=c++17", "-Itests/fakes", "-I.",
+                    "tests/ble_status_test.cpp", "BleStatusPublisher.cpp", "BleGatt.cpp", "BleIdentity.cpp",
+                    "-o", str(output)], cwd=ROOT, check=True)
     return subprocess.call([str(output)], cwd=ROOT)
 
 

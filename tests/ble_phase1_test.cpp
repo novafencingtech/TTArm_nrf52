@@ -52,7 +52,7 @@ static void identityAndGatt() {
   for (int i = 0; i < 8; ++i) {
     assert(bytes[4 + i] == 8 - i); assert(bytes[12 + i] == 0x18 - i);
   }
-  for (int i = 20; i < 24; ++i) assert(bytes[i] == 0);
+  assert(bytes[20] == 0 && bytes[21] == 2 && bytes[22] == 0 && bytes[23] == 0);
   assert(bytes[24] == 1 && bytes[26] == 2 && bytes[31] == 0);
   assert(std::strcmp(reinterpret_cast<char*>(bytes + 32), "ble1") == 0);
   for (int i = 36; i < 56; ++i) assert(bytes[i] == 0);
@@ -108,6 +108,10 @@ static void menuAndUi() {
   for (int i = 0; i < 4; ++i) tap(menu);
   hold(menu); assert(hasText(display, "Pair") && hasText(display, "Status"));
   hold(menu); assert(pairActions == 1 && hasText(display, "No passkey needed"));
+  uiStatus.connected = true; uiStatus.mtu = 247;
+  menu.updateMenu(false, ++testMillis); assert(hasText(display, "MTU: 247 / 247"));
+  uiStatus.mtu = 23;
+  menu.updateMenu(false, ++testMillis); assert(hasText(display, "MTU: 23 / 247"));
   hold(menu); assert(cancelActions == 1 && hasText(display, "Forget"));
   tap(menu); tap(menu); hold(menu); assert(hasText(display, "Forget?"));
   hold(menu); assert(forgetActions == 0); // Cancel is initially selected.

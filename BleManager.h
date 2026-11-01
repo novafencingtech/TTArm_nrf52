@@ -11,6 +11,7 @@ struct Status {
   uint8_t secondsLeft;
   uint8_t bonds;
   uint32_t generation;
+  uint16_t mtu; // Actual negotiated ATT MTU; zero when disconnected.
   char name[13];
   char deviceId[17];
   const char* message;
@@ -22,5 +23,8 @@ void cancelPairing();
 void forgetBonds(); // Only after explicit on-device confirmation.
 void stop();
 Status getStatus(uint32_t now);
+void cacheDiagnostics(uint32_t count, uint32_t roundedRateHz);
+void cacheBattery(float volts);
+void setMode(uint8_t protocolMode);
 }
 #endif

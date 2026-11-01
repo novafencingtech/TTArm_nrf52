@@ -40,11 +40,41 @@ bool BleGatt::begin(uint64_t deviceId, uint64_t bootId, uint16_t revision, const
   for (auto chr : streams) {
     if (!add(*chr, CHR_PROPS_NOTIFY, 66, protectedAccess, SECMODE_NO_ACCESS)) return false;
   }
-  // Final database, but ALL Control writes are rejected at ATT in Phase 1.
-  // There is no callback that executes a command and no publisher/send path.
+  // Control and all measurement streams remain deferred in Phase 2.
   return add(control, CHR_PROPS_WRITE, 9, SECMODE_NO_ACCESS, SECMODE_NO_ACCESS) &&
          add(result, CHR_PROPS_INDICATE, 10, protectedAccess, SECMODE_NO_ACCESS);
 }
+uint16_t BleGatt::statusCccdHandle() { return status.handles().cccd_handle; }
+bool BleGatt::statusSubscribed(uint16_t connection) {
+  uint8_t bytes[2] = {};
+  ble_gatts_value_t value = {};
+  value.len = sizeof(bytes);
+  value.p_value = bytes;
+  return sd_ble_gatts_value_get(connection, statusCccdHandle(), &value) == NRF_SUCCESS &&
+         value.len == 2 && (bytes[0] & 0x01) != 0;
+}
+BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t connection, const uint8_t* packet, uint16_t length) {
+  if (!statusSubscribed(connection)) return SendResult::Stopped;
+  uint16_t acceptedLength = length;
+  ble_gatts_hvx_params_t params = {};
+  params.handle = status.handles().value_handle;
+  params.type = BLE_GATT_HVX_NOTIFICATION;
+  params.p_len = &acceptedLength;
+  params.p_data = packet;
+  // Bluefruit notify() can wait for a queue credit. This stock SDK call returns
+  // NRF_ERROR_RESOURCES immediately; the foreground publisher retries later.
+  const uint32_t result = sd_ble_gatts_hvx(connection, &params);
+  if (result == NRF_SUCCESS) return acceptedLength == length ? SendResult::Sent : SendResult::Restart;
+  // INVALID_STATE can mean an MTU exchange is in progress. Keep the frame's
+  // slice boundaries and retry; actual CCCD/disconnect changes are observed too.
+  if (result == NRF_ERROR_RESOURCES || result == NRF_ERROR_BUSY || result == NRF_ERROR_INVALID_STATE) return SendResult::Retry;
+  if (result == NRF_ERROR_FORBIDDEN || result == BLE_ERROR_INVALID_CONN_HANDLE ||
+      result == BLE_ERROR_GATTS_SYS_ATTR_MISSING) return SendResult::Stopped;
+  return SendResult::Restart;
+}
 #else
 bool BleGatt::begin(uint64_t, uint64_t, uint16_t, const char*) { return false; }
+uint16_t BleGatt::statusCccdHandle() { return 0; }
+bool BleGatt::statusSubscribed(uint16_t) { return false; }
+BleGatt::SendResult BleGatt::tryNotifyStatus(uint16_t, const uint8_t*, uint16_t) { return SendResult::Stopped; }
 #endif
